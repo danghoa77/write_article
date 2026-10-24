@@ -76,8 +76,7 @@ export class AuthService {
             }
 
             this.set(key, token);
-
-            return data;
+            return this.get(key);
         } catch (error) {
             if (error instanceof HttpException) {
                 throw error;
