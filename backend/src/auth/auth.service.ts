@@ -1,94 +1,140 @@
 import {
-    BadGatewayException,
-    GatewayTimeoutException,
-    HttpException,
-    Injectable,
-    UnauthorizedException,
+  BadGatewayException,
+  GatewayTimeoutException,
+  HttpException,
+  Injectable,
+  UnauthorizedException,
 } from '@nestjs/common';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 @Injectable()
 export class AuthService {
-    private readonly tokens = new Map<string, string>();
+  private token: string | null = null;
+  private readonly sessions = new AsyncLocalStorage<{
+    token: string | null;
+    expiresAt: number;
+  }>();
+  private tokenExpiresAt = 0;
 
-    get(key: string): string | null {
-        return this.tokens.get(key) ?? null;
+  get(): string | null {
+    const session = this.sessions.getStore();
+    return session ? session.token : this.token;
+  }
+
+  set(token: string, expiresAt?: number): void {
+    if (!token.trim()) {
+      throw new Error('Token không được để trống');
     }
 
-    set(key: string, token: string): void {
-        if (!token) {
-            throw new Error('Token không được để trống');
-        }
-
-        this.tokens.set(key, token);
+    let expiration = expiresAt ?? Date.now() + 8 * 60 * 60 * 1000;
+    try {
+      const payload = JSON.parse(
+        Buffer.from(token.split('.')[1], 'base64url').toString(),
+      );
+      if (Number.isFinite(payload.exp))
+        expiration = Math.min(expiration, payload.exp * 1000);
+    } catch {
+      /* Opaque upstream sessions use the cookie expiration or app session limit. */
     }
-
-
-    async deleteToken(key: string): Promise<boolean> {
-        return this.tokens.delete(key);
+    const session = this.sessions.getStore();
+    if (session) {
+      session.token = token;
+      session.expiresAt = expiration;
+    } else {
+      this.token = token;
+      this.tokenExpiresAt = expiration;
     }
+  }
 
+  expiration(): number {
+    return this.sessions.getStore()?.expiresAt ?? this.tokenExpiresAt;
+  }
 
-    async login(username: string, password: string) {
-        try {
-            const response = await fetch(
-                'https://dash.tinfosmedia.com/api/auth/sign-in',
-                {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        Accept: 'application/json',
-                    },
-                    body: JSON.stringify({ username, password }),
-                    signal: AbortSignal.timeout(15_000),
-                },
-            );
-            const data = await response.json().catch(() => null);
+  withSession<T>(
+    token: string | null,
+    work: () => Promise<T>,
+    expiresAt = 0,
+  ): Promise<T> {
+    return this.sessions.run({ token, expiresAt }, work);
+  }
 
-            if (response.status === 401 || response.status === 403) {
-                throw new UnauthorizedException(
-                    data ?? 'Username hoặc password không chính xác',
-                );
-            }
+  async deleteToken(): Promise<boolean> {
+    const existed = this.get() !== null;
+    const session = this.sessions.getStore();
+    if (session) session.token = null;
+    else this.token = null;
+    return existed;
+  }
 
-            if (!response.ok) {
-                throw new HttpException(
-                    data ?? 'Authentication server error',
-                    response.status >= 500 ? 502 : response.status,
-                );
-            }
+  async login(username: string, password: string) {
+    try {
+      const response = await fetch(
+        'https://dash.tinfosmedia.com/api/auth/sign-in',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ username, password }),
+          signal: AbortSignal.timeout(15_000),
+        },
+      );
+      const data = await response.json().catch(() => null);
 
-            const cookiePair = response.headers
-                .getSetCookie()
-                .map((cookie) => cookie.split(';', 1)[0]?.trim())
-                .find((cookie) => cookie?.startsWith('auth-session='));
+      if (response.status === 401 || response.status === 403) {
+        throw new UnauthorizedException(
+          data ?? 'Username hoặc password không chính xác',
+        );
+      }
 
-            if (!cookiePair) {
-                throw new BadGatewayException('Không tìm thấy auth-session');
-            }
+      if (!response.ok) {
+        throw new HttpException(
+          data ?? 'Authentication server error',
+          response.status >= 500 ? 502 : response.status,
+        );
+      }
 
-            const separator = cookiePair.indexOf('=');
+      const sessionCookie = response.headers
+        .getSetCookie()
+        .find((cookie) => cookie.startsWith('auth-session='));
+      const cookiePair = sessionCookie?.split(';', 1)[0]?.trim();
 
-            const key = cookiePair.slice(0, separator);
-            const token = cookiePair.slice(separator + 1);
+      if (!cookiePair) {
+        throw new BadGatewayException('Không tìm thấy auth-session');
+      }
 
-            if (!token) {
-                throw new BadGatewayException('Token rỗng');
-            }
+      const separator = cookiePair.indexOf('=');
 
-            this.set(key, token);
-            return this.get(key);
-        } catch (error) {
-            if (error instanceof HttpException) {
-                throw error;
-            }
+      const token = cookiePair.slice(separator + 1);
 
-            if (error instanceof Error && error.name === 'TimeoutError') {
-                throw new GatewayTimeoutException(
-                    'Authentication server timed out',
-                );
-            }
+      if (!token) {
+        throw new BadGatewayException('Token rỗng');
+      }
 
-            throw new BadGatewayException('Không thể kết nối authentication server');
-        }
+      const maxAge = /;\s*Max-Age=(\d+)/i.exec(sessionCookie ?? '');
+      const expires = /;\s*Expires=([^;]+)/i.exec(sessionCookie ?? '');
+      const cookieExpiration = maxAge
+        ? Date.now() + Number(maxAge[1]) * 1000
+        : expires
+          ? Date.parse(expires[1])
+          : undefined;
+      this.set(
+        token,
+        cookieExpiration && Number.isFinite(cookieExpiration)
+          ? cookieExpiration
+          : undefined,
+      );
+      return token;
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      if (error instanceof Error && error.name === 'TimeoutError') {
+        throw new GatewayTimeoutException('Authentication server timed out');
+      }
+
+      throw new BadGatewayException('Không thể kết nối authentication server');
     }
+  }
 }
