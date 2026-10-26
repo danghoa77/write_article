@@ -163,6 +163,18 @@ test('browser routes require a signed cookie and bind storage to the verified Ti
     })
     .overrideProvider(AuthService)
     .useValue(f.auth)
+    .overrideProvider(
+      require('../dist/modules/content/prompt-settings.service.js')
+        .PromptSettingsService,
+    )
+    .useValue({
+      get: async () => ({
+        prompts:
+          new (require('../dist/modules/content/content-config.service.js').ContentConfigService)().defaults()
+            .pipelinePrompts,
+        revision: 0,
+      }),
+    })
     .overrideProvider(TeamSettingsService)
     .useValue({
       get: async (uid) => {

@@ -12,12 +12,6 @@ const {
 const {
   FirebaseIdentityGuard,
 } = require('../dist/modules/firebase/firebase-identity.guard.js');
-const {
-  CharacterSelectionService,
-} = require('../dist/modules/content/character-selection.service.js');
-const {
-  ContentGenerationService,
-} = require('../dist/modules/content/content-generation.service.js');
 const config = new ContentConfigService();
 function fakeFirebase() {
   const data = new Map();
@@ -42,7 +36,7 @@ test('new user gets defaults without creating database content', async () => {
   const db = fakeFirebase();
   const result = await new PromptSettingsService(db, config).get('a');
   a.equal(result.revision, 0);
-  a.deepEqual(result.prompts, config.defaults().pipelinePrompts);
+  a.deepEqual(result.prompts, { rewrite: config.defaults().prompt });
   a.equal(db.data.size, 0);
 });
 test('prompt update is shared between service instances but isolated by user', async () => {
@@ -51,9 +45,9 @@ test('prompt update is shared between service instances but isolated by user', a
     second = new PromptSettingsService(db, config);
   await first.update('a', {
     revision: 0,
-    prompts: { writer: 'Custom writing rule' },
+    prompts: { rewrite: 'Custom writing rule' },
   });
-  a.equal((await second.get('a')).prompts.writer, 'Custom writing rule');
+  a.equal((await second.get('a')).prompts.rewrite, 'Custom writing rule');
   a.equal((await second.get('b')).revision, 0);
   a.deepEqual(
     config.defaults().pipelinePrompts,
@@ -62,25 +56,24 @@ test('prompt update is shared between service instances but isolated by user', a
 });
 test('revision conflicts prevent overwriting changes from another device', async () => {
   const service = new PromptSettingsService(fakeFirebase(), config);
-  await service.update('a', { revision: 0, prompts: { writer: 'First' } });
+  await service.update('a', { revision: 0, prompts: { rewrite: 'First' } });
   await a.rejects(
     () =>
-      service.update('a', { revision: 0, prompts: { writer: 'Lost update' } }),
+      service.update('a', { revision: 0, prompts: { rewrite: 'Lost update' } }),
     (e) => e.getStatus() === 409,
   );
-  a.equal((await service.get('a')).prompts.writer, 'First');
+  a.equal((await service.get('a')).prompts.rewrite, 'First');
 });
-test('reset one prompt leaves other customized stages unchanged', async () => {
+test('reset restores the full n8n prompt', async () => {
   const service = new PromptSettingsService(fakeFirebase(), config);
   await service.update('a', {
     revision: 0,
-    prompts: { writer: 'Writer', analysis: 'Analysis' },
+    prompts: { rewrite: 'Writer' },
   });
-  const result = await service.reset('a', { revision: 1, stages: ['writer'] });
+  const result = await service.reset('a', { revision: 1, stages: ['rewrite'] });
   a.equal(result.revision, 2);
-  a.equal(result.prompts.writer, config.defaults().pipelinePrompts.writer);
-  a.equal(result.prompts.analysis, 'Analysis');
-  a.deepEqual(result.customizedStages, ['analysis']);
+  a.equal(result.prompts.rewrite, config.defaults().prompt);
+  a.deepEqual(result.customizedStages, []);
 });
 test('prompt endpoints cannot change team, API keys, or other settings', async () => {
   const service = new PromptSettingsService(fakeFirebase(), config);
@@ -88,7 +81,7 @@ test('prompt endpoints cannot change team, API keys, or other settings', async (
     () =>
       service.update('a', {
         revision: 0,
-        prompts: { writer: 'Rule' },
+        prompts: { rewrite: 'Rule' },
         teams: [],
       }),
     (e) => e.getStatus() === 400,
@@ -106,13 +99,13 @@ test('invalid and oversized prompt text are rejected', () => {
   for (const value of [
     null,
     [],
-    { writer: '' },
-    { writer: 3 },
-    { writer: 'x'.repeat(120001) },
+    { rewrite: '' },
+    { rewrite: 3 },
+    { rewrite: 'x'.repeat(120001) },
     { unknown: 'text' },
   ])
     a.throws(() => validatePromptOverrides(value));
-  validatePromptOverrides({ writer: 'Valid rule' });
+  validatePromptOverrides({ rewrite: 'Valid rule' });
 });
 test('Firebase identity guard requires a verified ID token', async () => {
   const guard = new FirebaseIdentityGuard({
@@ -130,73 +123,6 @@ test('Firebase identity guard requires a verified ID token', async () => {
   request.headers.authorization = 'Bearer firebase-id-token';
   a.equal(await guard.canActivate(context), true);
   a.equal(request.firebaseUser.uid, 'user-a');
-});
-test('all three customized prompt stages reach the selected model', async () => {
-  const calls = [];
-  const character = {
-    id: 'p1',
-    name: 'Original Star',
-    identity: 'real',
-    inCaption: true,
-    role: 'player',
-    status: 'active',
-    careerStage: 'veteran',
-    importance: 'any',
-    requiredTraits: ['parent'],
-    evidence: 'Original Star',
-  };
-  const ai = {
-    preflight: () => {},
-    text: async (prompt, provider, schema) => {
-      calls.push(prompt);
-      if (schema?.properties?.people)
-        return JSON.stringify({
-          people: [
-            {
-              name: 'Target Player',
-              role: 'player',
-              status: 'active',
-              careerStage: 'veteran',
-              importance: 'star',
-              traits: ['parent'],
-              confidence: 'high',
-              knowledgeNote: 'Known parenthood and veteran career',
-            },
-          ],
-        });
-      if (schema)
-        return JSON.stringify({ summary: 'Story', characters: [character] });
-      return 'Title: A Story\nCaption: FICTION: Target Player celebrates\nContent:\n<p>Target Player celebrates.</p>';
-    },
-  };
-  const selector = new CharacterSelectionService(config, ai, {
-    validateTeam: () => {},
-  });
-  const result = await new ContentGenerationService(selector, ai, config).batch(
-    {
-      caption: 'Original Star celebrates',
-      content: 'Original Star celebrates.',
-      teams: [
-        {
-          sport: 'AFL',
-          team: 'Example',
-          categories: [1],
-          players: ['Target Player'],
-        },
-      ],
-      prompts: {
-        analysis: 'CUSTOM ANALYSIS',
-        characterKnowledge: 'CUSTOM KNOWLEDGE',
-        writer: 'CUSTOM WRITER',
-      },
-    },
-  );
-  a.equal(result.success, true);
-  a.ok(calls[0].startsWith('CUSTOM ANALYSIS'));
-  a.ok(calls[1].startsWith('CUSTOM KNOWLEDGE'));
-  a.ok(calls[2].startsWith('CUSTOM WRITER'));
-  a.ok(calls[2].includes('OUTPUT CONTRACT:'));
-  a.equal(result.results[0].article.title, 'A Story');
 });
 test('prompt routes verify identity before reading/writing a user document', async () => {
   const { Test } = require('@nestjs/testing');
@@ -219,13 +145,13 @@ test('prompt routes verify identity before reading/writing a user document', asy
     await api
       .patch('/api/content/prompts')
       .set('Authorization', 'Bearer user-a')
-      .send({ revision: 0, prompts: { writer: 'Saved writer rule' } })
+      .send({ revision: 0, prompts: { rewrite: 'Saved writer rule' } })
       .expect(200);
     const result = await api
       .get('/api/content/prompts')
       .set('Authorization', 'Bearer user-a')
       .expect(200);
-    a.equal(result.body.prompts.writer, 'Saved writer rule');
+    a.equal(result.body.prompts.rewrite, 'Saved writer rule');
     const other = await api
       .get('/api/content/prompts')
       .set('Authorization', 'Bearer user-b')
@@ -239,4 +165,43 @@ test('prompt routes verify identity before reading/writing a user document', asy
   } finally {
     await app.close();
   }
+});
+
+test('reading old saved prompts archives them once and restores only the original full prompt', async () => {
+  const db = fakeFirebase();
+  const path = 'users/legacy/settings/prompts';
+  const old = {
+    version: 'n8n-rules-v2',
+    revision: 7,
+    prompts: {
+      writer: 'Old writer',
+      analysis: 'Old analysis',
+      rules: 'Old rules',
+    },
+  };
+  db.data.set(path, old);
+  const service = new PromptSettingsService(db, config);
+  const result = await service.get('legacy');
+  a.equal(result.revision, 8);
+  a.equal(result.version, 'n8n-rotation-v5');
+  a.deepEqual(result.prompts, { rewrite: config.defaults().prompt });
+  a.deepEqual(db.data.get(path + '/versions/before-n8n-rotation-v5-r7'), old);
+  a.equal((await service.get('legacy')).revision, 8);
+  a.equal(db.data.size, 2);
+});
+test('retired stage edits are rejected by the saved prompt API', async () => {
+  const service = new PromptSettingsService(fakeFirebase(), config);
+  await a.rejects(
+    () =>
+      service.update('a', { revision: 0, prompts: { analysis: 'Old stage' } }),
+    (error) => error.getStatus() === 400,
+  );
+});
+
+test('writer customizations survive migration while analyzer is retired',async()=>{
+ const db=fakeFirebase(),path='users/writer/settings/prompts';
+ const old={version:'n8n-direct-v3',revision:3,prompts:{rewrite:'User customized full n8n prompt'}};db.data.set(path,old);
+ const service=new PromptSettingsService(db,config),r=await service.get('writer');
+ a.equal(r.revision,4);a.equal(r.prompts.rewrite,old.prompts.rewrite);a.equal(r.prompts.contextAnalysis,undefined);a.deepEqual(db.data.get(path+'/versions/before-n8n-rotation-v5-r3'),old);
+ await a.rejects(()=>service.update('writer',{revision:4,prompts:{contextAnalysis:'Old context prompt'}}),e=>e.getStatus()===400);
 });

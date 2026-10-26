@@ -7,9 +7,6 @@ const {
   CharacterSelectionService,
 } = require('../dist/modules/content/character-selection.service.js');
 const {
-  ContentGenerationService,
-} = require('../dist/modules/content/content-generation.service.js');
-const {
   ContentConfigService,
 } = require('../dist/modules/content/content-config.service.js');
 const {
@@ -53,10 +50,241 @@ const storyAI = {
   preflight: () => {},
   text: async () => JSON.stringify(story),
 };
-function output(name = 'Target One') {
-  return `Title: A Team Celebration\nCaption: FICTION: ${name} celebrates\nContent:\n<p>${name} celebrates with fans.</p><!--IMAGE: ${name} celebrates-->`;
-}
 
+test('caption star requirements override a weak model classification and make the player primary', async () => {
+  const caption =
+    'CONFIRMED: Ohio State star Jeremiah Smith has been recognised.';
+  const person = {
+    ...source,
+    name: 'Jeremiah Smith',
+    importance: 'any',
+    narrativeRole: 'reference',
+    affiliation: 'unknown',
+    evidence: 'Jeremiah Smith',
+  };
+  const ai = {
+    preflight: () => {},
+    text: async () =>
+      JSON.stringify({ summary: 'Recognition', characters: [person] }),
+  };
+  const result = await selector(ai).analyze({
+    ...body,
+    caption,
+    content: 'Jeremiah Smith has influence.',
+  });
+  a.equal(result.characters[0].importance, 'star');
+  a.equal(result.characters[0].narrativeRole, 'primary');
+  a.equal(result.characters[0].affiliation, 'source_team');
+});
+
+test('caption star maps to an imported captain while record-holder comparisons remain context', () => {
+  const sourceStar = {
+    ...source,
+    name: 'Jeremiah Smith',
+    importance: 'star',
+    narrativeRole: 'primary',
+    affiliation: 'source_team',
+  };
+  const comparison = {
+    ...source,
+    id: 'record',
+    name: 'Braylon Edwards',
+    inCaption: false,
+    status: 'former',
+    narrativeRole: 'reference',
+    affiliation: 'external',
+  };
+  const captainTeam = {
+    ...team,
+    team: 'Adelaide Crows',
+    players: ['First Roster Player', 'Jordan Dawson'],
+    captain: 'Jordan Dawson',
+  };
+  const plan = selector(storyAI).select(
+    {
+      summary: 'Star recognition; historical record comparison',
+      characters: [sourceStar, comparison],
+    },
+    captainTeam,
+  );
+  a.equal(plan.mappings[0].targetName, 'Jordan Dawson');
+  a.ok(plan.mappings[0].profile.traits.includes('captain'));
+  a.match(plan.mappings[0].selectionReason, /Đội trưởng/);
+  a.equal(plan.mappings[1].action, 'context');
+  a.equal(plan.mappings[1].profile, undefined);
+});
+
+test('captain metadata cannot add a current person outside the imported player list', () => {
+  const plan = selector(storyAI).select(
+    { ...story, characters: [] },
+    { ...team, captain: 'Outside Captain' },
+  );
+  a.equal(plan.team.players.includes('Outside Captain'), false);
+  a.throws(
+    () =>
+      selector(storyAI).select(
+        { ...story, characters: [{ ...source, importance: 'star' }] },
+        { ...team, captain: 'Outside Captain' },
+      ),
+    (error) => error.getResponse().code === 'CHARACTER_REVIEW_REQUIRED',
+  );
+});
+
+test('an eligible original protagonist stays themselves when adapting to the same team', () => {
+  const captainTeam = {
+    ...team,
+    players: ['Other Captain', 'Jeremiah Smith'],
+    captain: 'Other Captain, Jeremiah Smith',
+  };
+  const plan = selector(storyAI).select(
+    {
+      ...story,
+      characters: [
+        {
+          ...source,
+          name: 'Jeremiah Smith',
+          importance: 'star',
+          narrativeRole: 'primary',
+        },
+      ],
+    },
+    captainTeam,
+  );
+  a.equal(plan.mappings[0].targetName, 'Jeremiah Smith');
+});
+
+test('multiple prominent candidates require justified ranking rather than roster order', () => {
+  const focus = { ...source, importance: 'star', narrativeRole: 'primary' };
+  const profiles = ['Target One', 'Target Two'].map((name) => ({
+    name,
+    role: 'player',
+    status: 'active',
+    careerStage: 'unknown',
+    importance: 'star',
+    traits: [],
+  }));
+  const enriched = { ...team, personnel: profiles };
+  const story = { summary: 'Leadership recognition', characters: [focus] };
+  a.throws(
+    () => selector(storyAI).select(story, enriched),
+    (error) => error.getResponse().code === 'CHARACTER_REVIEW_REQUIRED',
+  );
+  const recommendations = [
+    {
+      sourceCharacterId: focus.id,
+      targetName: 'Target One',
+      score: 70,
+      reason: 'Prominent player.',
+      confidence: 'high',
+    },
+    {
+      sourceCharacterId: focus.id,
+      targetName: 'Target Two',
+      score: 95,
+      reason: 'Leadership aligns with the recognition theme.',
+      confidence: 'high',
+    },
+  ];
+  for (const players of [team.players, [...team.players].reverse()]) {
+    const plan = selector(storyAI).select(
+      story,
+      { ...enriched, players },
+      recommendations,
+    );
+    a.equal(plan.mappings[0].targetName, 'Target Two');
+    a.equal(plan.mappings[0].suitabilityScore, 95);
+  }
+});
+
+test('external reference characters do not trigger a former-player knowledge lookup', async () => {
+  let calls = 0;
+  const reference = {
+    ...source,
+    name: 'Braylon Edwards',
+    inCaption: false,
+    status: 'former',
+    narrativeRole: 'reference',
+    affiliation: 'external',
+    evidence: 'Braylon Edwards',
+  };
+  const ai = {
+    preflight: () => {},
+    text: async () => {
+      calls++;
+      return JSON.stringify({ summary: 'Comparison', characters: [reference] });
+    },
+  };
+  const result = await selector(ai).plan({
+    ...body,
+    caption: 'A club reflects on receiving records.',
+    content: 'Braylon Edwards is mentioned as a historical comparison.',
+  });
+  a.equal(calls, 1);
+  a.equal(result.plans[0].mappings[0].action, 'context');
+});
+
+test('supplied captain leadership remains eligible even if model labels sporting prominence as supporting', () => {
+  const captainTeam = {
+    ...team,
+    captain: 'Target Two',
+    personnel: [
+      {
+        name: 'Target Two',
+        role: 'player',
+        status: 'active',
+        careerStage: 'established',
+        importance: 'supporting',
+        traits: [],
+      },
+    ],
+  };
+  const plan = selector(storyAI).select(
+    {
+      ...story,
+      characters: [{ ...source, importance: 'star', narrativeRole: 'primary' }],
+    },
+    captainTeam,
+  );
+  a.equal(plan.mappings[0].targetName, 'Target Two');
+});
+
+test('an unresolved model ranking gets one constrained repair without guessing a roster entry', async () => {
+  const focus = { ...source, importance: 'star', narrativeRole: 'primary' };
+  let supplements = 0;
+  const people = ['Target One', 'Target Two'].map((name) =>
+    remembered({ name, traits: [] }),
+  );
+  const ai = {
+    preflight: () => {},
+    text: async (prompt, provider, schema) => {
+      if (!schema?.properties?.people)
+        return JSON.stringify({ ...story, characters: [focus] });
+      supplements++;
+      if (supplements === 2)
+        a.ok(
+          JSON.parse(prompt.split('\nCONTEXT JSON:\n')[1]).selectionFeedback,
+        );
+      return JSON.stringify({
+        people,
+        recommendations:
+          supplements === 1
+            ? []
+            : [
+                {
+                  sourceCharacterId: focus.id,
+                  targetName: 'Target Two',
+                  score: 95,
+                  confidence: 'high',
+                  reason: 'Compatible leadership and prominence.',
+                },
+              ],
+      });
+    },
+  };
+  const result = await selector(ai).plan(body);
+  a.equal(supplements, 2);
+  a.equal(result.plans[0].mappings[0].targetName, 'Target Two');
+});
 test('named real characters map only to compatible input-team candidates', () => {
   const plan = selector(storyAI).select(story, team);
   a.equal(plan.mappings[0].targetName, 'Target One');
@@ -245,212 +473,6 @@ test('GPT quota errors identify OPENAI_API_KEY and never auto-switch providers',
   );
   a.equal(calls, 1);
 });
-test('multi-team source is analyzed once; same caption/content feeds separate locked maps', async () => {
-  let analyses = 0;
-  let writes = 0;
-  const ai = {
-    preflight: () => {},
-    text: async (prompt, provider, schema) => {
-      if (schema) {
-        analyses++;
-        return JSON.stringify(story);
-      }
-      writes++;
-      const context = JSON.parse(prompt.split('\nCONTEXT JSON:\n')[1]);
-      a.equal(context.source.caption, body.caption);
-      return output(context.lockedCharacterMap[0].targetName);
-    },
-  };
-  const second = {
-    ...team,
-    team: 'Second Team',
-    players: ['Other Player'],
-    headCoach: undefined,
-  };
-  const service = new ContentGenerationService(selector(ai), ai, config);
-  const result = await service.batch({ ...body, teams: [team, second] });
-  a.equal(analyses, 1);
-  a.equal(writes, 2);
-  a.equal(result.results[0].article.caption, 'FICTION: Target One celebrates');
-  a.equal(
-    result.results[1].article.caption,
-    'FICTION: Other Player celebrates',
-  );
-  a.deepEqual(result.results[0].categories, [44]);
-});
-test('bounded writing concurrency and result order survive individual failures', async () => {
-  let active = 0,
-    max = 0;
-  const teams = Array.from({ length: 5 }, (_, i) => ({
-    ...team,
-    team: 'Team ' + i,
-  }));
-  const ai = {
-    text: async (prompt) => {
-      const context = JSON.parse(prompt.split('\nCONTEXT JSON:\n')[1]);
-      active++;
-      max = Math.max(max, active);
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      active--;
-      if (context.targetTeam.team === 'Team 2') throw Error('one failure');
-      return 'Title: Team Celebration\nCaption: FICTION: Fans celebrate\nContent:\n<p>Fans celebrate.</p>';
-    },
-  };
-  const sel = {
-    plan: async () => ({
-      analysis: { summary: 'Story', characters: [] },
-      plans: teams.map((team) => ({ team, mappings: [] })),
-    }),
-  };
-  const result = await new ContentGenerationService(sel, ai, config).batch({
-    ...body,
-    teams,
-    concurrency: 2,
-  });
-  a.equal(max, 2);
-  a.equal(result.success, false);
-  a.deepEqual(
-    result.results.map((x) => x.team),
-    teams.map((x) => x.team),
-  );
-  a.equal(result.results[2].success, false);
-  a.equal(result.results[3].success, true);
-});
-test('writer may not introduce real roster names into an anonymous story', async () => {
-  const ai = { text: async () => output('Target One') };
-  const service = new ContentGenerationService(
-    {
-      plan: async () => ({
-        analysis: { summary: 'Story', characters: [] },
-        plans: [{ team, mappings: [] }],
-      }),
-    },
-    ai,
-    config,
-  );
-  const result = await service.batch(body);
-  a.equal(result.success, false);
-  a.match(result.results[0].error.message, /unselected roster/);
-});
-test('writer must preserve fictional identity and caption/content replacement consistency', async () => {
-  const sel = {
-    plan: async () => ({
-      analysis: story,
-      plans: [
-        {
-          team,
-          mappings: [{ source, action: 'replace', targetName: 'Target One' }],
-        },
-      ],
-    }),
-  };
-  const service = new ContentGenerationService(
-    sel,
-    { text: async () => output('Target Two') },
-    config,
-  );
-  a.equal((await service.batch(body)).success, false);
-  const fictional = { ...source, identity: 'fictional' };
-  const preserve = {
-    plan: async () => ({
-      analysis: story,
-      plans: [
-        {
-          team,
-          mappings: [
-            { source: fictional, action: 'preserve', targetName: source.name },
-          ],
-        },
-      ],
-    }),
-  };
-  const ok = await new ContentGenerationService(
-    preserve,
-    { text: async () => output('Original Star') },
-    config,
-  ).batch(body);
-  a.equal(ok.success, true);
-});
-test('unresolved background knowledge still fails before writing any article', async () => {
-  let written = false;
-  const ai = {
-    preflight: () => {},
-    text: async (p, provider, schema) => {
-      if (schema?.properties?.people) return JSON.stringify({ people: [] });
-      if (schema)
-        return JSON.stringify({
-          ...story,
-          characters: [{ ...source, requiredTraits: ['parent'] }],
-        });
-      written = true;
-      return output();
-    },
-  };
-  await a.rejects(
-    () => new ContentGenerationService(selector(ai), ai, config).batch(body),
-    (e) => e.getResponse().code === 'CHARACTER_REVIEW_REQUIRED',
-  );
-  a.equal(written, false);
-});
-
-test('one team with unresolved character facts does not block writing other teams', async () => {
-  let analysisCalls = 0;
-  const writtenTeams = [];
-  const ai = {
-    preflight: () => {},
-    text: async (prompt, provider, schema) => {
-      if (schema?.properties?.people) return JSON.stringify({ people: [] });
-      if (schema) {
-        analysisCalls++;
-        return JSON.stringify({
-          ...story,
-          characters: [{ ...source, careerStage: 'veteran' }],
-        });
-      }
-      const context = JSON.parse(prompt.split('\nCONTEXT JSON:\n')[1]);
-      writtenTeams.push(context.targetTeam.team);
-      return output(context.lockedCharacterMap[0].targetName);
-    },
-  };
-  const complete = (name) => ({
-    ...team,
-    team: name,
-    personnel: [
-      {
-        name: 'Target One',
-        role: 'player',
-        status: 'active',
-        careerStage: 'veteran',
-        importance: 'star',
-        traits: [],
-      },
-    ],
-  });
-  const teams = [
-    complete('First'),
-    { ...team, team: 'Missing facts' },
-    complete('Last'),
-  ];
-  const result = await new ContentGenerationService(
-    selector(ai),
-    ai,
-    config,
-  ).batch({ ...body, teams });
-  a.equal(analysisCalls, 1);
-  a.equal(result.success, false);
-  a.deepEqual(
-    result.results.map((row) => row.team),
-    teams.map((team) => team.team),
-  );
-  a.deepEqual(
-    result.results.map((row) => row.success),
-    [true, false, true],
-  );
-  a.equal(result.results[1].stage, 'plan');
-  a.equal(result.results[1].error.code, 'CHARACTER_REVIEW_REQUIRED');
-  a.deepEqual(writtenTeams, ['First', 'Last']);
-});
-
 function knowledgeAI(characters, people) {
   const calls = [];
   return {
@@ -569,10 +591,9 @@ test('uncertain model background is not fabricated into a compatible profile', a
     [{ ...source, requiredTraits: ['parent'] }],
     [remembered({ confidence: 'uncertain' })],
   );
-  await a.rejects(
-    () => selector(ai).plan(body),
-    (e) => e.getResponse().code === 'CHARACTER_REVIEW_REQUIRED',
-  );
+  const result = await selector(ai).plan(body);
+  a.equal(result.plans[0].mappings[0].action, 'generalize');
+  a.equal(result.plans[0].mappings[0].profile, undefined);
 });
 test('anonymous and fictional people do not trigger background lookup', async () => {
   for (const characters of [

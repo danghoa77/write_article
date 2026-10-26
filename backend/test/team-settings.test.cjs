@@ -60,6 +60,22 @@ test('deleting every lineup persists an empty catalog without resurrecting defau
   a.deepEqual(await service.resolveForUser(undefined, 'a'), []);
 });
 
+test('selection count follows the configured catalog without the former 50-team cap', async () => {
+  const service = settings();
+  const teams = Array.from({ length: 51 }, (_, index) => ({
+    team: 'Configured ' + index,
+    sport: 'AFL',
+    categories: [44],
+    players: ['Player ' + index],
+  }));
+  await service.update('many', { revision: 0, teams });
+  const selected = await service.resolveForUser(
+    teams.map(({ team, sport }) => ({ team, sport })),
+    'many',
+  );
+  a.equal(selected.length, teams.length);
+});
+
 test('mixed AFL/NFL selections resolve complete imported rosters, coach and categories in request order', async () => {
   const teams = await settings().resolve(picks);
   a.deepEqual(
@@ -168,14 +184,22 @@ function workflow(options = {}) {
   const comments = [];
   let counter = 0;
   let sourceReads = 0;
+  let activeImages = 0,
+    maximumImages = 0;
   const service = new ContentWorkflowService(
     config,
     {
       validateTeam: (team) => content.validateTeam(team),
-      images: async (article) => ({
-        ...article,
-        thumbnailUrl: 'https://images.test/photo.jpg',
-      }),
+      images: async (article) => {
+        activeImages++;
+        maximumImages = Math.max(maximumImages, activeImages);
+        if (options.imageDelay)
+          await new Promise((resolve) =>
+            setTimeout(resolve, options.imageDelay),
+          );
+        activeImages--;
+        return { ...article, thumbnailUrl: 'https://images.test/photo.jpg' };
+      },
     },
     {
       source: async () => {
@@ -236,8 +260,44 @@ function workflow(options = {}) {
     },
     { preflight: () => {} },
   );
-  return { service, updates, events, comments, sourceReads: () => sourceReads };
+  return {
+    service,
+    updates,
+    events,
+    comments,
+    sourceReads: () => sourceReads,
+    maximumImages: () => maximumImages,
+  };
 }
+
+test('all five selected teams proceed through publication together and keep their own card captions', async () => {
+  const teams = config.defaults().teams;
+  const run = workflow({ imageDelay: 10 });
+  run.service.config = { key: () => 'mock' };
+  const result = await run.service.run({
+    teams,
+    imageProvider: 'tavily',
+    concurrency: 2,
+  });
+  a.equal(run.maximumImages(), teams.length);
+  a.deepEqual(result.summary, {
+    total: teams.length,
+    succeeded: teams.length,
+    failed: 0,
+  });
+  a.deepEqual(
+    result.results.map((row) => row.team),
+    teams.map((row) => row.team),
+  );
+  a.equal(new Set(result.results.map((row) => row.cardId)).size, teams.length);
+  for (const row of result.results)
+    a.ok(
+      run.comments.some(
+        (comment) =>
+          comment.id === row.cardId && comment.caption === row.caption,
+      ),
+    );
+});
 
 test('one batch reads source once and publishes each sport/team to its own returned Trello card', async () => {
   const teams = await settings().resolve(picks);

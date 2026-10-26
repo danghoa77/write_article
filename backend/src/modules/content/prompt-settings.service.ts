@@ -6,8 +6,9 @@ import {
 } from '@nestjs/common';
 import { FirebaseService } from '../firebase/firebase.service.js';
 import { ContentConfigService } from './content-config.service.js';
+import { PROMPT_VERSION, RULE_IDS } from './prompt-composer.js';
 import {
-  PROMPT_STAGES,
+  ACTIVE_PROMPT_STAGES,
   validatePromptOverrides,
   type PromptOverrides,
   type PromptStage,
@@ -30,14 +31,25 @@ export class PromptSettingsService {
   }
 
   templates() {
-    return this.config.defaults().pipelinePrompts;
+    return { rewrite: this.config.defaults().prompt };
   }
 
   private response(saved: any = {}) {
-    const overrides = saved.prompts ?? {};
+    const overrides = Object.fromEntries(
+      ACTIVE_PROMPT_STAGES.filter(
+        (stage) => typeof saved.prompts?.[stage] === 'string',
+      ).map((stage) => [stage, saved.prompts[stage]]),
+    );
     validatePromptOverrides(overrides);
     return {
       prompts: { ...this.templates(), ...overrides },
+      version: PROMPT_VERSION,
+      currentVersion: PROMPT_VERSION,
+      mode: 'n8n-rotation',
+      policy:
+        'Giữ nguyên prompt n8n. Lịch sử Firebase chỉ giúp tránh lặp cầu thủ trong caption của cùng nguồn và đội; không thêm bước phân tích hay xác minh nội dung. Chỉ nhận diện tên từ lineup/hồ sơ đã lưu. HLV không bị thay chỉ để tạo sự khác biệt.',
+      ruleIds: RULE_IDS,
+      needsSync: false,
       customizedStages: Object.keys(overrides),
       revision: saved.revision ?? 0,
       updatedAt: saved.updatedAt ?? null,
@@ -47,7 +59,46 @@ export class PromptSettingsService {
   async get(uid: string) {
     try {
       const snapshot = await this.reference(uid).get();
-      return this.response(snapshot.data());
+      const saved = snapshot.data();
+      if (saved && saved.version !== PROMPT_VERSION)
+        return this.synchronizeCanonical(uid, saved.revision ?? 0);
+      return this.response(saved);
+    } catch (error) {
+      this.storageError(error);
+    }
+  }
+
+  async synchronizeCanonical(uid: string, revision: number) {
+    this.validateRevision(revision);
+    try {
+      const reference = this.reference(uid);
+      return await this.firebase.database().runTransaction(async (tx) => {
+        const saved = (await tx.get(reference)).data() ?? {};
+        if (saved.version === PROMPT_VERSION) return this.response(saved);
+        if ((saved.revision ?? 0) !== revision)
+          throw new ConflictException(
+            'Prompt changed; reload before synchronizing',
+          );
+        tx.set(
+          reference
+            .collection('versions')
+            .doc(`before-${PROMPT_VERSION}-r${revision}`),
+          saved,
+        );
+        const next = {
+          prompts: {
+            ...this.templates(),
+            ...(saved.prompts?.rewrite
+              ? { rewrite: saved.prompts.rewrite }
+              : {}),
+          },
+          version: PROMPT_VERSION,
+          revision: revision + 1,
+          updatedAt: new Date().toISOString(),
+        };
+        tx.set(reference, next);
+        return this.response(next);
+      });
     } catch (error) {
       this.storageError(error);
     }
@@ -74,6 +125,12 @@ export class PromptSettingsService {
     }
     this.validateRevision(body.revision);
     validatePromptOverrides(body.prompts);
+    if (
+      Object.keys(body.prompts).some(
+        (stage) => !(ACTIVE_PROMPT_STAGES as readonly string[]).includes(stage),
+      )
+    )
+      throw new BadRequestException('Only rewrite is editable');
     return this.change(uid, body.revision, (saved) => ({
       ...saved,
       ...body.prompts,
@@ -87,11 +144,13 @@ export class PromptSettingsService {
     )
       throw new BadRequestException('Only revision and stages are allowed');
     this.validateRevision(body.revision);
-    const stages = body.stages ?? PROMPT_STAGES;
+    const stages = body.stages ?? ACTIVE_PROMPT_STAGES;
     if (
       !Array.isArray(stages) ||
       !stages.length ||
-      stages.some((stage) => !PROMPT_STAGES.includes(stage))
+      stages.some(
+        (stage) => !(ACTIVE_PROMPT_STAGES as readonly string[]).includes(stage),
+      )
     )
       throw new BadRequestException('Invalid prompt stages');
     return this.change(uid, body.revision, (saved) => {
@@ -117,9 +176,16 @@ export class PromptSettingsService {
             throw new ConflictException(
               'Prompt changed on another device; reload before saving',
             );
-          const prompts = update(saved.prompts ?? {});
+          const prompts = update(
+            Object.fromEntries(
+              ACTIVE_PROMPT_STAGES.filter(
+                (stage) => typeof saved.prompts?.[stage] === 'string',
+              ).map((stage) => [stage, saved.prompts[stage]]),
+            ),
+          );
           validatePromptOverrides(prompts);
           const next = {
+            version: PROMPT_VERSION,
             prompts,
             revision: revision + 1,
             updatedAt: new Date().toISOString(),

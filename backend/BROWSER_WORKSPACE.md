@@ -1,3 +1,7 @@
+> Luồng hiện hành trong source: [Prompt n8n + lịch sử tránh lặp, n8n-rotation-v5](./N8N_ROTATION_WORKFLOW.md). Mô tả các phiên bản trước bên dưới được giữ để tham chiếu.
+
+> Luồng hiện hành: [Ngữ cảnh Gemini → chọn nhân vật → Writer, n8n-context-v4](./N8N_CONTEXT_WORKFLOW.md). Các phần mô tả n8n-direct-v3 bên dưới được giữ làm lịch sử.
+
 # API cho frontend AutoWrite
 
 Frontend React/Vite cùng origin với NestJS, gọi `/api`. Vite proxy local chuyển `/api` sang `127.0.0.1:3000`; Vercel giữ rewrite hai service hiện tại.
@@ -20,7 +24,7 @@ Các API sau chỉ nhận signed browser cookie, không nhận UID từ client v
 | --- | --- |
 | `GET /api/workspace/teams` | Đọc `{teams,revision,updatedAt}` |
 | `PUT /api/workspace/teams` | Lưu `{teams,revision}` |
-| `GET /api/workspace/prompts` | Đọc ba prompt và revision |
+| `GET /api/workspace/prompts` | Đọc prompt n8n đầy đủ và revision |
 | `PATCH /api/workspace/prompts` | Lưu `{prompts,revision}` |
 | `POST /api/workspace/prompts/reset` | `{revision,stages}` |
 | `POST /api/workspace/run` | Body như `/content/run`; dùng token từ cookie, bỏ qua field login trong body |
@@ -33,7 +37,7 @@ Các API sau chỉ nhận signed browser cookie, không nhận UID từ client v
 
 Firestore namespace là `users/{encodeURIComponent('tinfos:' + normalizedUsername)}/settings/{teams|prompts|workspace|library}`. Identity lấy từ login Tinfos và cookie có chữ ký. Các route Firebase ID token cũ vẫn tồn tại, dùng namespace Firebase UID riêng; dữ liệu cũ không tự ghép sang tài khoản Tinfos.
 
-Settings gồm slugSuffix (mặc định danghoa123), concurrency, textProvider, imageProvider, geminiModel, openaiModel và catalog categories `{id,name}[]`. Mã category dùng cho publish Tinfos/Trello đầu ra, không liên quan nguồn Trello đầu vào. Xóa category chỉ bỏ khỏi danh mục lựa chọn; không xóa dữ liệu từ dịch vụ ngoài.
+Settings gồm slugSuffix (mặc định danghoa123), textProvider, imageProvider, geminiModel, openaiModel và catalog categories `{id,name}[]`. Số tác vụ phụ thuộc số đội chọn; concurrency cũ được bỏ qua khi đọc cấu hình. Mã category dùng cho publish Tinfos/Trello đầu ra, không liên quan nguồn Trello đầu vào. Xóa category chỉ bỏ khỏi danh mục lựa chọn; không xóa dữ liệu từ dịch vụ ngoài.
 
 Secrets hỗ trợ GEMINI_API_KEY, OPENAI_API_KEY, TAVILY_API_KEY, SERPER_API_KEY, TRELLO_API_KEY, TRELLO_API_TOKEN. Không gửi trường thì giữ nguyên, null thì vô hiệu hóa key kể cả env fallback. Key mã hóa AES-256-GCM với nonce ngẫu nhiên và authentication tag; API chỉ trả configured/saved, không trả plaintext hay ciphertext. Khóa mã hóa lấy từ WORKSPACE_ENCRYPTION_KEY nếu có; nếu không dẫn xuất riêng theo ngữ cảnh từ Firebase credential đang có. Giữ nguồn khóa ổn định giữa các lần deploy; đổi khóa cần giữ bản cũ để giải mã/di chuyển dữ liệu. Không để Firebase Admin hoặc khóa mã hóa xuất hiện trong FE.
 
@@ -47,11 +51,15 @@ Kết quả partial, post đã publish nhưng comment thất bại, hoặc timeo
 
 ## Lưu tại frontend
 
-- Đội được chọn và category riêng từng đội, công cụ viết/tìm ảnh, slug, list nguồn và concurrency: localStorage theo tài khoản.
+- Đội được chọn và category riêng từng đội, công cụ viết/tìm ảnh, slug: localStorage theo tài khoản.
 - Nguồn caption/content và 20 kết quả gần nhất: localStorage cùng tài khoản; lịch sử giới hạn trên trình duyệt này.
-- Prompt draft: tự lưu local, gửi cùng lần viết. Nút lưu đám mây dùng revision để lưu Firestore; reset chỉ reset stage hiện tại.
+- Prompt draft: tự lưu local, gửi cùng lần viết. Nút lưu đám mây dùng revision để lưu Firestore; reset khôi phục toàn bộ prompt n8n.
 - Lineup: lưu Firestore qua nút Lưu lineup, giữ bản cache local để đọc khi mất kết nối. Khi cache fallback mà lưu revision bị lệch trả 409, yêu cầu tải lại cấu hình trước.
 
 Không có chế độ demo hoặc thông tin đăng nhập thử trong frontend. Harness UI ở thư mục `test-results` chỉ chạy local, bị Git và deployment ignore.
 
 Kiểm tra: `npm run test:workspace`, `npm run test:browser`, `npm run test:content`, frontend `npm run build` và `npm run lint`. Các bài kiểm tra tự động dùng API giả lập, không publish bài thật.
+
+## Viết trực tiếp theo n8n
+
+FE chỉ có editor `prompts.rewrite`; bỏ Quét nội dung, chế độ chọn nhân vật và dữ kiện sự kiện. `/workspace/preview` viết thử riêng tư; `/workspace/analyze` đã gỡ. Migration lưu backup prompt cũ trước khi khôi phục. Xem [N8N_DIRECT_WORKFLOW.md](./N8N_DIRECT_WORKFLOW.md).

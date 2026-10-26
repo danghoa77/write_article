@@ -329,9 +329,14 @@ function runner(options = {}) {
       articles,
       auth,
       {
-        batch: async () => {
+        batch: async (body) => {
+          options.inspectBatch?.(body);
           calls.push('generate');
-          return { success: true, results: [{ article: generated }] };
+          return {
+            success: true,
+            analysis: options.analysis,
+            results: [{ article: generated, requiresReview: options.reviewRequired, reviewWarnings: options.reviewRequired ? ['Identity mismatch'] : [] }],
+          };
         },
       },
       { preflight: () => {} },
@@ -351,6 +356,28 @@ test('full workflow updates before publishing and comments using publish respons
   ]);
   assert.equal(result.results[0].commented, true);
 });
+test('workflow ignores retired character controls and passes only source, note and full prompt to generation', async () => {
+  const { service } = runner({
+    inspectBatch: (body) => {
+      assert.equal(body.characterMode, undefined);
+      assert.equal(body.characterSelections, undefined);
+      assert.equal(body.teamFacts, undefined);
+      assert.equal(body.prompt, 'Keep the tone');
+      assert.deepEqual(body.prompts, { rewrite: 'Full prompt' });
+    },
+  });
+  const result = await service.run({
+    teams: [team],
+    imageProvider: 'tavily',
+    characterMode: 'manual',
+    characterSelections: [],
+    teamFacts: [],
+    prompt: 'Keep the tone',
+    prompts: { rewrite: 'Full prompt' },
+  });
+  assert.equal('analysis' in result, false);
+});
+
 test('failed update stops before publish and returns failing stage/postId', async () => {
   const { service, calls } = runner({ updateFail: true });
   await assert.rejects(
@@ -400,7 +427,6 @@ test('missing credentials fail before draft creation', async () => {
 });
 
 test('Nest route executes inline login -> source -> create -> Gemini -> images -> update -> publish -> published Trello comment', async () => {
-  const { NestFactory } = require('@nestjs/core');
   const { AppModule } = require('../dist/app.module.js');
   const request = require('supertest');
   const names = [
@@ -524,7 +550,12 @@ test('Nest route executes inline login -> source -> create -> Gemini -> images -
     }
     throw Error('Unexpected fake URL ' + url.hostname + url.pathname);
   };
-  const app = await NestFactory.create(AppModule, { logger: false });
+  const {Test}=require('@nestjs/testing');
+  const {CharacterRotationService}=require('../dist/modules/content/character-rotation.service.js');
+  const fixture=await Test.createTestingModule({imports:[AppModule]}).overrideProvider(CharacterRotationService).useValue({
+    begin:async()=>({excluded:[]}), directive:()=>'', complete:async()=>({selected:[],excluded:[],cycle:1}), release:async()=>{},
+  }).compile();
+  const app=fixture.createNestApplication({logger:false});
   app.setGlobalPrefix('api');
   await app.init();
   try {
@@ -550,7 +581,6 @@ test('Nest route executes inline login -> source -> create -> Gemini -> images -
       'login',
       'source-card',
       'source-comment',
-      'analyze',
       'gemini',
       'create',
       'search',
@@ -565,4 +595,10 @@ test('Nest route executes inline login -> source -> create -> Gemini -> images -
       if (saved[name] === undefined) delete process.env[name];
       else process.env[name] = saved[name];
   }
+});
+
+test('an article that contradicts its character directive remains reviewable and never creates/publishes/comments',async()=>{
+ const {service,calls}=runner({reviewRequired:true});
+ const result=await service.run({teams:[team],imageProvider:'tavily'});
+ assert.equal(result.success,false);assert.equal(result.results[0].stage,'review');assert.equal(result.results[0].requiresReview,true);assert.ok(result.results[0].article);assert.deepEqual(calls,['generate']);
 });

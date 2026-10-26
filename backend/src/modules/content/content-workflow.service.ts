@@ -107,43 +107,64 @@ export class ContentWorkflowService {
           batch.results.find((item: any) => !item.success)?.statusCode ?? 502,
         );
       }
-      for (let index = 0; index < teams.length; index++) {
-        const team = teams[index];
-        const written = batch.results[index];
-        if (written.success === false) {
-          results.push({
-            team: team.team,
-            sport: team.sport,
-            success: false,
-            stage: written.stage ?? 'generate',
-            published: false,
-            statusCode: written.statusCode,
-            error: written.error,
-          });
-          continue;
-        }
-        try {
-          results.push({
-            ...(await this.runTeam(team, written.article, body)),
-            sport: team.sport,
-            success: true,
-          });
-        } catch (error) {
-          if (teams.length === 1) throw error;
-          const details =
-            error instanceof HttpException
-              ? error.getResponse()
-              : { message: 'Workflow step failed' };
-          results.push({
-            ...(typeof details === 'object' ? details : { message: details }),
-            team: team.team,
-            sport: team.sport,
-            success: false,
-            statusCode:
-              error instanceof HttpException ? error.getStatus() : 502,
-          });
-        }
-      }
+      await Promise.all(
+        teams.map(async (team, index) => {
+          const written = batch.results[index];
+          if (written.success === false) {
+            results[index] = {
+              team: team.team,
+              sport: team.sport,
+              success: false,
+              stage: written.stage ?? 'generate',
+              published: false,
+              statusCode: written.statusCode,
+              error: written.error,
+            };
+            return;
+          }
+          if (written.requiresReview) {
+            results[index] = {
+              team: team.team,
+              sport: team.sport,
+              success: false,
+              stage: 'review',
+              published: false,
+              article: written.article,
+              requiresReview: true,
+              rotation: written.rotation,
+              reviewWarnings: written.reviewWarnings,
+              error: {
+                code: 'CHARACTER_REVIEW_REQUIRED',
+                message:
+                  'Bản viết chưa theo đúng chỉ thị nhân vật. Xem bản thử trước khi đăng.',
+              },
+            };
+            return;
+          }
+          try {
+            results[index] = {
+              ...(await this.runTeam(team, written.article!, body)),
+              sport: team.sport,
+              success: true,
+              rotation: written.rotation,
+            };
+          } catch (error) {
+            if (teams.length === 1) throw error;
+            const details =
+              error instanceof HttpException
+                ? error.getResponse()
+                : { message: 'Workflow step failed' };
+            results[index] = {
+              ...(typeof details === 'object' ? details : { message: details }),
+              team: team.team,
+              sport: team.sport,
+              success: false,
+              statusCode:
+                error instanceof HttpException ? error.getStatus() : 502,
+            };
+          }
+        }),
+      );
       const succeeded = results.filter((result) => result.success).length;
       return {
         success: succeeded === teams.length,

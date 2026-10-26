@@ -1,3 +1,5 @@
+import type { StoryAnalysis } from "./types";
+
 export class ApiError extends Error {
   status: number;
   data: unknown;
@@ -20,6 +22,8 @@ export function errorText(data: unknown): string {
     return `Thông tin kết nối ${value.provider ?? ""} không hợp lệ. Mở Cài đặt hoặc Token tìm ảnh để cập nhật key.`;
   if (value.code === "CHARACTER_REVIEW_REQUIRED")
     return `Cần kiểm tra dữ kiện để chọn nhân vật${value.character ? ` cho ${value.character}` : ""}. Hãy bổ sung hồ sơ hoặc điều chỉnh prompt.`;
+  if (value.code === "ANALYSIS_EVIDENCE_INVALID")
+    return `Chưa đối chiếu được trích dẫn${value.character ? ` của ${value.character}` : ""} với nguồn sau khi phân tích lại. Kiểm tra cách ghi tên và nội dung nguồn, rồi bấm Quét nội dung.`;
   if (value.error && typeof value.error === "object")
     return errorText(value.error);
   if (value.message)
@@ -81,3 +85,10 @@ export function dateTime(value: string) {
     timeStyle: "short",
   }).format(new Date(value));
 }
+export const replacementCharacters = (analysis: StoryAnalysis | null) =>
+  analysis?.characters.filter(
+    (person) =>
+      person.identity === "real" &&
+      person.narrativeRole !== "reference" &&
+      person.affiliation !== "external",
+  ) ?? [];

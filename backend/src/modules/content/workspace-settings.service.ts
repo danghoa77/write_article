@@ -31,7 +31,6 @@ export const PROVIDER_KEYS: Record<string, string[]> = {
 };
 export type WorkspaceOptions = {
   slugSuffix: string;
-  concurrency: number;
   textProvider: 'gemini' | 'gpt';
   imageProvider: 'tavily' | 'serper';
   geminiModel: string;
@@ -113,7 +112,6 @@ export class WorkspaceSettingsService {
     const cfg = this.config.defaults();
     return {
       slugSuffix: 'danghoa123',
-      concurrency: 2,
       textProvider: 'gemini',
       imageProvider: 'tavily',
       geminiModel: process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
@@ -164,6 +162,7 @@ export class WorkspaceSettingsService {
     const settings = { ...saved.settings };
     // Notes belong to source content. Ignore notes saved by older versions globally.
     delete settings.note;
+    delete settings.concurrency;
     return { ...this.defaults(), ...settings };
   }
   private async read(uid: string) {
@@ -189,9 +188,6 @@ export class WorkspaceSettingsService {
       typeof settings.slugSuffix !== 'string' ||
       !settings.slugSuffix.trim() ||
       settings.slugSuffix.length > 120 ||
-      !Number.isInteger(settings.concurrency) ||
-      settings.concurrency < 1 ||
-      settings.concurrency > 4 ||
       !['gemini', 'gpt'].includes(settings.textProvider) ||
       !['tavily', 'serper'].includes(settings.imageProvider) ||
       typeof settings.geminiModel !== 'string' ||
@@ -305,6 +301,7 @@ export class WorkspaceSettingsService {
       ...this.values(saved),
       GEMINI_MODEL: options.geminiModel,
       OPENAI_MODEL: options.openaiModel,
+      CONTENT_HISTORY_SCOPE: uid,
     };
     return this.config.withValues(values, async () => {
       try {

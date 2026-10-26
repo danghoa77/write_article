@@ -1,10 +1,14 @@
 import { BadRequestException } from '@nestjs/common';
 
 export const PROMPT_STAGES = [
+  'rewrite',
+  'contextAnalysis',
+  'rules',
   'analysis',
   'characterKnowledge',
   'writer',
 ] as const;
+export const ACTIVE_PROMPT_STAGES = ['rewrite'] as const;
 export type PromptStage = (typeof PROMPT_STAGES)[number];
 export type PromptOverrides = Partial<Record<PromptStage, string>>;
 

@@ -9,7 +9,6 @@ import {
 import { FirebaseService } from '../firebase/firebase.service.js';
 import { ContentConfigService } from './content-config.service.js';
 import { ContentService } from './content.service.js';
-import { CharacterSelectionService } from './character-selection.service.js';
 import type { ContentTeam, TeamSelection } from './content.model.js';
 
 const normalize = (value: string) =>
@@ -27,7 +26,6 @@ export class TeamSettingsService {
     private readonly firebase: FirebaseService,
     private readonly config: ContentConfigService,
     private readonly content: ContentService,
-    private readonly selection: CharacterSelectionService,
   ) {}
 
   private reference(uid: string) {
@@ -40,9 +38,9 @@ export class TeamSettingsService {
   }
 
   private validate(teams: ContentTeam[]) {
-    if (!Array.isArray(teams) || teams.length > 50)
+    if (!Array.isArray(teams))
       throw new BadRequestException(
-        'teams must contain 0 to 50 configured teams',
+        'teams must be an array of configured teams',
       );
     const seen = new Set<string>();
     for (const team of teams) {
@@ -60,7 +58,7 @@ export class TeamSettingsService {
         throw new BadRequestException(
           'Configured teams require name, sport, nonempty players and categories',
         );
-      this.selection.select({ summary: '', characters: [] }, team);
+      this.validateProfiles(team);
       const key = teamKey(team);
       if (seen.has(key))
         throw new BadRequestException('Duplicate team and sport');
@@ -68,6 +66,46 @@ export class TeamSettingsService {
     }
     if (Buffer.byteLength(JSON.stringify(teams), 'utf8') > 750000)
       throw new BadRequestException('Team configuration is too large');
+  }
+
+  // Validate saved lineup data only. No story analysis or character selection.
+  private validateProfiles(team: ContentTeam) {
+    if (team.personnel !== undefined && !Array.isArray(team.personnel))
+      throw new BadRequestException('personnel must be an array');
+    for (const person of team.personnel ?? []) {
+      if (
+        !person ||
+        typeof person.name !== 'string' ||
+        !person.name.trim() ||
+        !['player', 'coach', 'staff', 'other'].includes(person.role) ||
+        !['active', 'former', 'unknown'].includes(person.status) ||
+        !['rookie', 'established', 'veteran', 'unknown'].includes(
+          person.careerStage,
+        ) ||
+        !['star', 'supporting', 'unknown'].includes(person.importance) ||
+        !Array.isArray(person.traits) ||
+        !person.traits.every((item) => typeof item === 'string') ||
+        (person.position !== undefined &&
+          (typeof person.position !== 'string' || person.position.length > 150))
+      )
+        throw new BadRequestException('Invalid personnel profile');
+      const inPlayers = team.players.some(
+        (name) => normalize(name) === normalize(person.name),
+      );
+      const isCoach =
+        !!team.headCoach &&
+        normalize(team.headCoach) === normalize(person.name);
+      if (
+        ((inPlayers || isCoach) && person.status === 'former') ||
+        (person.status === 'active' &&
+          person.role === 'player' &&
+          !inPlayers) ||
+        (person.status === 'active' && person.role === 'coach' && !isCoach)
+      )
+        throw new BadRequestException(
+          'Personnel profile conflicts with saved current lineup',
+        );
+    }
   }
 
   private response(saved: any = {}): {
@@ -130,9 +168,11 @@ export class TeamSettingsService {
   ): Promise<ContentTeam[]> {
     if (
       requested !== undefined &&
-      (!Array.isArray(requested) || !requested.length || requested.length > 50)
+      (!Array.isArray(requested) || !requested.length)
     )
-      throw new BadRequestException('teams must contain 1 to 50 selections');
+      throw new BadRequestException(
+        'teams must contain at least one selection',
+      );
     let uid: string | undefined;
     if (authorization !== undefined) {
       const match = /^Bearer\s+(\S+)$/i.exec(authorization);
@@ -151,9 +191,11 @@ export class TeamSettingsService {
   ): Promise<ContentTeam[]> {
     if (
       requested !== undefined &&
-      (!Array.isArray(requested) || !requested.length || requested.length > 50)
+      (!Array.isArray(requested) || !requested.length)
     )
-      throw new BadRequestException('teams must contain 1 to 50 selections');
+      throw new BadRequestException(
+        'teams must contain at least one selection',
+      );
     const needsCatalog =
       !requested ||
       requested.some(

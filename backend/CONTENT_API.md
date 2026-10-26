@@ -1,3 +1,9 @@
+> Luồng hiện hành trong source: [Prompt n8n + lịch sử tránh lặp, n8n-rotation-v5](./N8N_ROTATION_WORKFLOW.md). Mô tả các phiên bản trước bên dưới được giữ để tham chiếu.
+
+> Luồng hiện hành: [Ngữ cảnh Gemini → chọn nhân vật → Writer, n8n-context-v4](./N8N_CONTEXT_WORKFLOW.md). Các phần mô tả n8n-direct-v3 bên dưới được giữ làm lịch sử.
+
+> Luồng hiện hành: [n8n trực tiếp](./N8N_DIRECT_WORKFLOW.md), phiên bản n8n-direct-v3.
+
 # Content workflow API
 
 **Chạy nhiều đội bằng tên đội/môn và lưu lineup:** xem [BATCH_WORKFLOW.md](./BATCH_WORKFLOW.md). `/run` nhận các lựa chọn `{team,sport}` và tự lấy cấu hình; có thể lưu danh sách đội trong Firestore.
@@ -63,7 +69,7 @@ Thứ tự cho mỗi đội:
 ```text
 [lấy cấu hình đội] → [login nếu có] → đọc card/comment nguồn
 → phân tích nguồn chung → đối chiếu nhân vật theo từng đội
-→ GPT/Gemini viết các đội với concurrency 1–4
+→ GPT/Gemini viết một bản cho mỗi đội đã chọn, song song toàn bộ đội
 → format Title / Caption / Content
 → mỗi bài hợp lệ: tạo nháp lấy postId
 → query từng placeholder → Serper hoặc Tavily
@@ -72,7 +78,7 @@ Thứ tự cho mỗi đội:
 → publish → lấy cardId từ phản hồi publish → thêm caption Trello
 ```
 
-Người dùng gửi một request cho nhiều đội. Viết đồng thời có giới hạn; ảnh và đăng bài được xử lý lần lượt nội bộ. Lịch sử ảnh dùng chung trong instance. Không gửi thêm trường nội dung ngoài body article đã định nghĩa. Hai URL featured image cùng lấy thumbnail như `data1` gốc. Không publish nếu không tìm được thumbnail truy cập được.
+Người dùng gửi một request cho nhiều đội. Số tác vụ phụ thuộc số đội chọn; không cố định 2/4 đội. Sau bước viết, mỗi đội chạy chuỗi ảnh/đăng bài riêng và giữ thứ tự cập nhật trước publish. Lịch sử ảnh dùng chung trong instance. Không gửi thêm trường nội dung ngoài body article đã định nghĩa. Hai URL featured image cùng lấy thumbnail như `data1` gốc. Không publish nếu không tìm được thumbnail truy cập được.
 
 Response có `success`, `partialSuccess`, `summary`, `sourceCardId`, `imageProvider`, `results`. Mỗi result có team, sport, success và dữ liệu bài hoặc stage/error. Đội lỗi riêng không chặn các đội khác; xem chi tiết trong BATCH_WORKFLOW.md. Không trả token hoặc API key.
 
@@ -156,6 +162,6 @@ Tests giả lập nhà cung cấp: không tốn credit, không đăng bài và k
 Một request full flow có thể chạy lâu (nhiều đội, Gemini retry, tải thử thumbnail). API xử lý đồng bộ; chưa có hàng đợi, job ID hoặc lưu trạng thái bền. Giới hạn thời gian Vercel có thể ngắt request; dùng các endpoint từng bước hoặc gửi ít đội cho mỗi lần chạy khi tích hợp UI. Khóa chạy flow và token cũng chỉ có tác dụng trong cùng instance.
 
 
-## Chỉnh prompt từ frontend và lưu Firestore
+## Luồng viết hiện hành
 
-Xem [FIREBASE_PROMPTS.md](./FIREBASE_PROMPTS.md): API đọc/lưu/reset ba prompt và cách truyền `prompts` vào mỗi lần chạy. Backend đã có kết nối Firestore; các cấu hình khác giữ riêng.
+Xem [N8N_DIRECT_WORKFLOW.md](./N8N_DIRECT_WORKFLOW.md): mỗi đội gọi AI trực tiếp bằng toàn bộ prompt n8n. Không phân tích/chọn nhân vật ở backend. `prompts.rewrite` là template đầy đủ; `prompt` là lưu ý riêng của nguồn. Các field characterMode/characterSelections/teamFacts cũ không tham gia luồng viết. `/content/plan` và `/workspace/analyze` đã gỡ. `/workspace/preview` chỉ viết, không đăng bài.

@@ -252,7 +252,6 @@ export function GeneralSettings({
     try {
       await update({
         slugSuffix: draft.slugSuffix,
-        concurrency: draft.concurrency,
         textProvider: draft.textProvider,
         imageProvider: draft.imageProvider,
       });
@@ -285,24 +284,6 @@ export function GeneralSettings({
                 required
                 placeholder="danghoa123"
               />
-            </label>
-            <label>
-              Số đội viết đồng thời
-              <select
-                value={draft.concurrency}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    concurrency: Number(event.target.value),
-                  })
-                }
-              >
-                {[1, 2, 3, 4].map((value) => (
-                  <option key={value} value={value}>
-                    {value} đội
-                  </option>
-                ))}
-              </select>
             </label>
           </div>
           <div className="form-grid">

@@ -52,7 +52,7 @@ export default function Login({
           </h1>
           <p>
             Không gian viết nội dung thể thao của bạn. Từ ý tưởng đầu tiên đến
-            bài viết sẵn sàng trên Tinfos và Trello.
+            bài viết sẵn sàng xuất bản và chuyển đến Trello.
           </p>
           <div className="login-steps">
             <div className="login-step">
@@ -88,7 +88,7 @@ export default function Login({
             <Icon name="lock" />
           </span>
           <h2>Chào mừng trở lại</h2>
-          <p>Đăng nhập bằng tài khoản Tinfos để bắt đầu viết.</p>
+          <p>Đăng nhập để bắt đầu viết.</p>
           {message && <Notice kind="warning">{message}</Notice>}
           {error && <Notice kind="danger">{error}</Notice>}
           <fieldset className="stack" disabled={busy}>

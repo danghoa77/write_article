@@ -18,6 +18,23 @@ export interface TeamSelection {
 }
 
 export type TextProvider = 'gpt' | 'gemini';
+export type CharacterMode = 'auto' | 'preserve' | 'manual';
+export interface CharacterOptions {
+  characterMode?: CharacterMode;
+  characterSelections?: {
+    sport: string;
+    team: string;
+    sourceName: string;
+    targetName: string;
+  }[];
+  teamFacts?: { sport: string; team: string; facts: string }[];
+}
+export interface StoryScan {
+  storyType: 'sad_news' | 'lifestyle' | 'match' | 'recognition' | 'other';
+  identityCase: 'none' | 'fictional' | 'real' | 'mixed' | 'uncertain';
+  eventSpecific: 'none' | 'personal' | 'match';
+  reason: string;
+}
 export interface PersonProfile {
   name: string;
   role: 'player' | 'coach' | 'staff' | 'other';
@@ -27,6 +44,7 @@ export interface PersonProfile {
   traits: string[];
   knowledgeSource?: 'input' | 'model_knowledge';
   knowledgeNote?: string;
+  position?: string;
 }
 export interface SourceCharacter {
   id: string;
@@ -39,22 +57,36 @@ export interface SourceCharacter {
   importance: 'star' | 'supporting' | 'any';
   requiredTraits: string[];
   evidence: string;
+  narrativeRole?: 'primary' | 'supporting' | 'reference';
+  affiliation?: 'source_team' | 'external' | 'unknown';
 }
 export interface StoryAnalysis {
   summary: string;
+  sourceTeam?: string;
   characters: SourceCharacter[];
+  scan?: StoryScan;
 }
 export interface CharacterMapping {
   source: SourceCharacter;
-  action: 'replace' | 'preserve';
+  action: 'replace' | 'preserve' | 'context' | 'generalize';
   targetName: string;
   profile?: PersonProfile;
+  selectionReason?: string;
+  suitabilityScore?: number;
+  roleException?: 'life_event';
 }
 export interface TeamPlan {
   team: ContentTeam;
   mappings: CharacterMapping[];
 }
-export interface BatchContentBody {
+export interface CharacterRecommendation {
+  sourceCharacterId: string;
+  targetName: string;
+  score: number;
+  reason: string;
+  confidence: 'high' | 'uncertain';
+}
+export interface BatchContentBody extends CharacterOptions {
   caption: string;
   content: string;
   teams: ContentTeam[];
@@ -70,7 +102,7 @@ export interface SourceContent {
   content: string;
 }
 
-export interface GenerateContentBody {
+export interface GenerateContentBody extends CharacterOptions {
   team: ContentTeam;
   caption: string;
   content: string;
@@ -88,7 +120,9 @@ export interface PreparedContent {
   thumbnailTier?: number;
 }
 
-export interface CompleteWorkflowBody {
+export interface CompleteWorkflowBody extends CharacterOptions {
+  promptVersion?: string;
+  promptRevision?: number;
   login?: { username: string; password: string };
   listId?: string;
   teams?: (ContentTeam | TeamSelection)[];

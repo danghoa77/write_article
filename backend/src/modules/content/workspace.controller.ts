@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  ConflictException,
   Get,
   Patch,
   Post,
@@ -27,6 +28,8 @@ import {
 } from './workspace-settings.service.js';
 import { ContentConfigService } from './content-config.service.js';
 import { TrelloService } from './trello.service.js';
+import { ContentGenerationService } from './content-generation.service.js';
+import { PROMPT_VERSION } from './prompt-composer.js';
 type WorkspaceRequest = Request & { browserSession: BrowserSession };
 
 @Controller('workspace')
@@ -40,6 +43,7 @@ export class WorkspaceController {
     private readonly settings: WorkspaceSettingsService,
     private readonly config: ContentConfigService,
     private readonly trello: TrelloService,
+    private readonly generation: ContentGenerationService,
   ) {}
   @Get('settings')
   getSettings(@Req() req: WorkspaceRequest) {
@@ -63,6 +67,8 @@ export class WorkspaceController {
       this.sessions.uid(req.browserSession),
       async () => ({
         ...this.config.defaults(),
+        pipelinePolicy: undefined,
+        pipelinePrompts: { rewrite: this.config.defaults().prompt },
         credentials: this.config.credentialStatus(),
       }),
     );
@@ -133,6 +139,7 @@ export class WorkspaceController {
         // Browser requests always use the verified session, never stored login credentials.
         return this.workflow.run({
           ...body,
+          prompts: await this.resolvePrompts(uid, body),
           login: undefined,
           teams,
           slugSuffix: body.slugSuffix ?? settings.slugSuffix,
@@ -140,5 +147,37 @@ export class WorkspaceController {
         });
       }),
     );
+  }
+
+  private async resolvePrompts(uid: string, body: CompleteWorkflowBody) {
+    const saved = await this.prompts.get(uid);
+    if (
+      body.promptVersion !== undefined &&
+      (body.promptVersion !== PROMPT_VERSION ||
+        body.promptRevision !== saved.revision)
+    )
+      throw new ConflictException(
+        'Prompt đã đổi trên server. Tải lại trang để nhận bản đồng bộ trước khi chạy.',
+      );
+    // Older clients cannot run stale local overrides after the rules migration.
+    return body.promptVersion === PROMPT_VERSION
+      ? { ...saved.prompts, ...body.prompts }
+      : saved.prompts;
+  }
+
+  @Post('preview')
+  preview(@Req() req: WorkspaceRequest, @Body() body: CompleteWorkflowBody) {
+    const uid = this.sessions.uid(req.browserSession);
+    return this.settings.execute(uid, async () => {
+      const teams = await this.teams.resolveForUser(body?.teams, uid);
+      const prompts = await this.resolvePrompts(uid, body);
+      return this.generation.batch({
+        ...body,
+        caption: body.caption!,
+        content: body.content!,
+        teams,
+        prompts,
+      });
+    });
   }
 }

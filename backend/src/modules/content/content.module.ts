@@ -8,8 +8,8 @@ import { ContentService } from './content.service.js';
 import { ContentWorkflowService } from './content-workflow.service.js';
 import { TrelloService } from './trello.service.js';
 import { ContentAiService } from './content-ai.service.js';
-import { CharacterSelectionService } from './character-selection.service.js';
 import { ContentGenerationService } from './content-generation.service.js';
+import { CharacterRotationService } from './character-rotation.service.js';
 import { FirebaseModule } from '../firebase/firebase.module.js';
 import { PromptSettingsService } from './prompt-settings.service.js';
 import { PromptsController } from './prompts.controller.js';
@@ -33,8 +33,8 @@ import { WorkspaceSettingsService } from './workspace-settings.service.js';
     ContentWorkflowService,
     TrelloService,
     ContentAiService,
-    CharacterSelectionService,
     ContentGenerationService,
+    CharacterRotationService,
     PromptSettingsService,
     TeamSettingsService,
     WorkspaceSettingsService,

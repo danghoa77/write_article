@@ -67,10 +67,22 @@ export class ContentConfigService {
   }
 
   defaults() {
+    const original = this.read('rewrite-prompt.md').trimEnd();
+    const normalized = original.replace(/\r\n/g, '\n');
     return {
       teams: JSON.parse(this.read('teams.json')) as ContentTeam[],
-      prompt: this.read('rewrite-prompt.md').trimEnd(),
+      prompt: original,
+      pipelinePolicy: this.read('pipeline-policy.md').trimEnd(),
+      contextWriterPolicy: this.read('context-writer-policy.md').trimEnd(),
       pipelinePrompts: {
+        contextAnalysis: this.read('context-analyzer.md').trimEnd(),
+        rewrite: original,
+        rules: normalized
+          .slice(
+            normalized.indexOf('\nRules\n') + 7,
+            normalized.lastIndexOf('\nOutput\n'),
+          )
+          .trim(),
         analysis: this.read('character-analysis.md').trimEnd(),
         writer: this.read('article-writer.md').trimEnd(),
         characterKnowledge: this.read('character-knowledge.md').trimEnd(),

@@ -1163,7 +1163,7 @@ td small {
     grid-template-columns: 1fr;
   }
   .prompt-nav {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .prompt-nav button {
     padding: 10px;
@@ -1317,4 +1317,54 @@ td small {
   .source-content {
     min-height: 200px;
   }
+}
+.character-controls {
+  border-top: 1px solid var(--dn-border);
+  padding-top: 20px;
+}
+.character-controls h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.character-controls .notice {
+  overflow-wrap: anywhere;
+}
+.character-team {
+  background: var(--dn-bg);
+  border: 1px solid var(--dn-border);
+  border-radius: 10px;
+  padding: 16px;
+}
+.event-facts summary {
+  cursor: pointer;
+  color: var(--dn-text);
+  font-size: 13px;
+}
+.event-facts > .stack {
+  margin-top: 14px;
+}
+.prompt-policy {
+  padding: 18px;
+  margin-bottom: 20px;
+}
+.prompt-policy summary,
+.effective-prompt summary {
+  cursor: pointer;
+  color: var(--dn-text);
+  font-size: 13px;
+}
+.prompt-policy pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 400px;
+  overflow: auto;
+  font: inherit;
+  font-size: 12px;
+  color: var(--dn-muted);
+}
+.effective-prompt {
+  margin-top: 20px;
+}
+.effective-prompt textarea {
+  margin-top: 14px;
 }

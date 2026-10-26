@@ -14,6 +14,7 @@ import type {
   WorkspaceOptions,
   Library,
   LibraryItem,
+  PromptDocument,
 } from "./types";
 import { api, ApiError, errorText, hasExpired, load, save } from "./lib";
 import {
@@ -87,22 +88,24 @@ const navigation: {
 ];
 const stages: { id: PromptStage; title: string; description: string }[] = [
   {
-    id: "analysis",
-    title: "01 · Phân tích nguồn",
-    description: "Nhận diện câu chuyện & nhân vật",
-  },
-  {
-    id: "characterKnowledge",
-    title: "02 · Chọn nhân vật",
-    description: "Dữ kiện & độ tương thích",
-  },
-  {
-    id: "writer",
-    title: "03 · Viết bài",
-    description: "Văn phong & quy tắc đầu ra",
+    id: "rewrite",
+    title: "Prompt viết bài n8n",
+    description: "Toàn bộ prompt gốc và các rule",
   },
 ];
+const contextLabels: Record<string, string> = {
+  contract_retention: "Gia hạn & giữ người",
+  transfer: "Chuyển đội",
+  farewell: "Chia tay",
+  return_comeback: "Trở lại",
+  life_event: "Đời sống",
+  injury_recovery: "Chấn thương & hồi phục",
+  milestone: "Dấu mốc & vinh danh",
+  rivalry: "Đối đầu",
+  other: "Nội dung khác",
+};
 const stageLabel: Record<string, string> = {
+  review: "Duyệt nhân vật",
   plan: "Chọn nhân vật",
   generate: "Viết bài",
   "generate-batch": "Viết bài",
@@ -114,11 +117,13 @@ const stageLabel: Record<string, string> = {
   unknown: "Chưa xác định",
 };
 function Status({ result }: { result: Result }) {
-  const status = result.success
-    ? "success"
-    : result.published || result.stage === "unknown"
-      ? "warning"
-      : "danger";
+  const status = result.requiresReview
+    ? "warning"
+    : result.success
+      ? "success"
+      : result.published || result.stage === "unknown"
+        ? "warning"
+        : "danger";
   return (
     <span className={`status ${status}`}>
       <Icon
@@ -131,13 +136,21 @@ function Status({ result }: { result: Result }) {
         }
         size={12}
       />
-      {result.success
-        ? "Đã publish"
-        : result.published
-          ? "Cần thêm caption"
-          : result.stage === "unknown"
-            ? "Cần kiểm tra"
-            : "Chưa hoàn tất"}
+      {result.requiresReview
+        ? "Cần duyệt"
+        : result.preview
+          ? result.requiresReview
+            ? "Cần duyệt"
+            : result.success
+              ? "Bản xem trước"
+              : "Viết thử lỗi"
+          : result.success
+            ? "Đã publish"
+            : result.published
+              ? "Cần thêm caption"
+              : result.stage === "unknown"
+                ? "Cần kiểm tra"
+                : "Chưa hoàn tất"}
     </span>
   );
 }
@@ -214,6 +227,64 @@ function ResultDetail({
             <p>{result.caption}</p>
           </div>
         )}
+        {result.rotation && (
+          <Notice>
+            <strong>
+              Cầu thủ trong caption:{" "}
+              {result.rotation.selected.join(", ") || "Không nhận diện được"}
+            </strong>
+            <p>{result.rotation.note}</p>
+            {!!result.rotation.excluded.length && (
+              <p>Đã tránh: {result.rotation.excluded.join(", ")}</p>
+            )}
+            <p>
+              Vòng {result.rotation.cycle}. Bản viết thử cũng được tính vào lịch
+              sử.
+            </p>
+          </Notice>
+        )}
+        {result.characterPlan && (
+          <div>
+            <label>Nhân vật & lý do</label>
+            {result.characterPlan.mappings.length ? (
+              result.characterPlan.mappings.map((person) => (
+                <p key={person.sourceId}>
+                  <strong>
+                    {person.sourceName ?? "Nhân vật không nêu tên"} →{" "}
+                    {person.target}
+                  </strong>
+                  <br />
+                  <span className="muted">{person.reason}</span>
+                  {(person.knowledgeSource === "model_knowledge" ||
+                    person.backgroundSource === "model_knowledge") && (
+                    <>
+                      <br />
+                      <small>Kiến thức model · chưa xác minh realtime</small>
+                    </>
+                  )}
+                </p>
+              ))
+            ) : (
+              <p>Không chọn tên riêng; giữ ở cấp độ đội hoặc cách gọi chung.</p>
+            )}
+          </div>
+        )}
+        {!!result.reviewWarnings?.length && (
+          <Notice kind="warning">{result.reviewWarnings.join(" ")}</Notice>
+        )}
+        {result.article && (
+          <div>
+            <label>Bản viết thử · chưa publish</label>
+            <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.8 }}>
+              {result.article.content
+                .replace(/<!--[\s\S]*?-->/g, "")
+                .replace(/<\/(?:p|h[1-6]|li)>/gi, "\n\n")
+                .replace(/<[^>]*>/g, "")
+                .replace(/\n{3,}/g, "\n\n")
+                .trim()}
+            </div>
+          </div>
+        )}
         {result.postId && (
           <div>
             <label>Post ID</label>
@@ -276,14 +347,28 @@ export default function Workspace({
   const [teamRevision, setTeamRevision] = useState(0);
   const [prompts, setPrompts] = useState<Prompts | null>(null);
   const [promptRevision, setPromptRevision] = useState(0);
-  const [promptStage, setPromptStage] = useState<PromptStage>("writer");
+  const [promptDocument, setPromptDocument] = useState<PromptDocument | null>(
+    null,
+  );
+  const [promptStage, setPromptStage] = useState<PromptStage>("rewrite");
   const [promptSaving, setPromptSaving] = useState(false);
   const [prefs, setPrefs] = useState<Preferences | null>(null);
   const [source, setSource] = useState(() => {
-    const saved = load(storage + "source", {
-      caption: "", content: "", cardId: "", note: "",
+    const saved = load<{
+      caption: string;
+      content: string;
+      cardId: string;
+      note: string;
+    }>(storage + "source", {
+      caption: "",
+      content: "",
+      cardId: "",
+      note: "",
     });
-    return { ...saved, note: saved.note ?? "" };
+    return {
+      ...saved,
+      note: saved.note ?? "",
+    };
   });
   const [sourceLoading, setSourceLoading] = useState(false);
   const [latest, setLatest] = useState<Run | null>(null);
@@ -321,7 +406,7 @@ export default function Workspace({
     const results = await Promise.allSettled([
       api<Config>("workspace/config"),
       api<{ teams: Team[]; revision: number }>("workspace/teams"),
-      api<{ prompts: Prompts; revision: number }>("workspace/prompts"),
+      api<PromptDocument>("workspace/prompts"),
       api<WorkspaceSettings>("workspace/settings"),
       api<Library>("workspace/library"),
     ]);
@@ -357,30 +442,28 @@ export default function Workspace({
         : load(storage + "teams", { teams: cfg.teams, revision: 0 });
     setTeams(teamData.teams);
     setTeamRevision(teamData.revision);
-    const promptData =
+    const promptData: PromptDocument =
       results[2].status === "fulfilled"
         ? results[2].value
         : load(storage + "prompts", {
             prompts: cfg.pipelinePrompts,
             revision: 0,
           });
-    const draft = load<{ prompts: Prompts; revision: number } | null>(
-      storage + "prompt-draft",
-      null,
-    );
+    const draft = load<PromptDocument | null>(storage + "prompt-draft", null);
     setPrompts(
-      draft?.revision === promptData.revision
+      draft?.revision === promptData.revision &&
+        draft?.version === promptData.version
         ? draft.prompts
         : promptData.prompts,
     );
     setPromptRevision(promptData.revision);
+    setPromptDocument(promptData);
     const defaults: Preferences = {
       selected: teamData.teams[0] ? [teamKey(teamData.teams[0])] : [],
       categories: {},
       textProvider: appData.settings.textProvider,
       imageProvider: appData.settings.imageProvider,
       slugSuffix: appData.settings.slugSuffix,
-      concurrency: appData.settings.concurrency,
       listId: cfg.trello.listId,
     };
     const preferences = {
@@ -486,23 +569,33 @@ export default function Workspace({
       ]
     : [];
   const missing = requiredKeys.filter((key) => !config?.credentials[key]);
-  const canRun =
+  const canPreview =
     !busy &&
+    !promptDocument?.needsSync &&
     !sourceLoading &&
     !!source.caption.trim() &&
     !!source.content.trim() &&
     selected.length > 0 &&
     selected.every((team) => team.categories.length > 0) &&
-    missing.length === 0 &&
+    !!config?.credentials[
+      prefs?.textProvider === "gpt" ? "OPENAI_API_KEY" : "GEMINI_API_KEY"
+    ] &&
     !!prompts &&
     Object.values(prompts).every((value) => value.trim());
+  const canRun = canPreview && missing.length === 0;
   function record(value: Run) {
     const next = [value, ...load<Run[]>(storage + "history", [])].slice(0, 20);
     persist("history", next);
     setLatest(value);
   }
-  async function run() {
-    if (!canRun || !prefs || !prompts || running.current) return;
+  async function run(preview = false) {
+    if (
+      !(preview ? canPreview : canRun) ||
+      !prefs ||
+      !prompts ||
+      running.current
+    )
+      return;
     running.current = true;
     setBusy(true);
     setElapsed(0);
@@ -511,37 +604,79 @@ export default function Workspace({
     const id = crypto.randomUUID();
     const time = new Date().toISOString();
     try {
-      const response = await api<Omit<Run, "id" | "time">>(
-        "workspace/run",
+      let response = await api<Omit<Run, "id" | "time">>(
+        preview ? "workspace/preview" : "workspace/run",
         {
           teams: selected,
           caption: source.caption,
           content: source.content,
           textProvider: prefs.textProvider,
           imageProvider: prefs.imageProvider,
-          concurrency: prefs.concurrency,
           prompts,
           ...(prefs.slugSuffix.trim()
             ? { slugSuffix: prefs.slugSuffix.trim() }
             : {}),
           prompt: source.note,
+          promptVersion: promptDocument?.version,
+          promptRevision,
         },
         "POST",
         300000,
       );
+      if (preview) {
+        const results = response.results.map((item) => ({
+          ...item,
+          preview: true,
+          published: false,
+          commented: false,
+          title: item.article?.title,
+          caption: item.article?.caption,
+        }));
+        response = {
+          ...response,
+          results,
+          summary: {
+            total: selected.length,
+            succeeded: results.filter((item) => item.success).length,
+            failed: results.filter((item) => !item.success).length,
+          },
+        };
+      }
       record({
         ...response,
         id,
         time,
         sourceCardId: source.cardId || response.sourceCardId,
       });
+      const completed =
+        !preview &&
+        response.success &&
+        response.summary.succeeded === selected.length &&
+        response.results.length === selected.length &&
+        response.results.every(
+          (item) => item.success && item.published && item.commented,
+        );
+      if (completed) {
+        updateSource({
+          caption: "",
+          content: "",
+          note: "",
+          cardId: "",
+        });
+      }
       if (response.sessionExpired) expire();
       else
         setToast({
-          kind: response.success ? "success" : "warning",
-          text: response.success
-            ? `Đã publish và thêm caption Trello cho ${response.summary.succeeded} đội.`
-            : `Hoàn tất ${response.summary.succeeded}/${response.summary.total} đội. Xem kết quả trước khi chạy lại.`,
+          kind:
+            response.success &&
+            !response.results.some((item) => item.requiresReview)
+              ? "success"
+              : "warning",
+          text: preview
+            ? `Đã viết thử ${response.summary.succeeded}/${response.summary.total} đội. Chưa publish; mở chi tiết để xem nhân vật và bài viết.`
+            : completed
+              ? `Đã publish và thêm caption Trello cho ${response.summary.succeeded} đội. Đã xóa nội dung nhập để chuẩn bị bài mới.`
+              : `Hoàn tất ${response.summary.succeeded}/${response.summary.total} đội. Xem kết quả trước khi chạy lại.`,
         });
     } catch (error) {
       const data =
@@ -673,8 +808,6 @@ export default function Workspace({
       const nextPatch: Partial<Preferences> = {};
       if (patch.slugSuffix !== undefined)
         nextPatch.slugSuffix = patch.slugSuffix;
-      if (patch.concurrency !== undefined)
-        nextPatch.concurrency = patch.concurrency;
       if (patch.textProvider !== undefined)
         nextPatch.textProvider = patch.textProvider;
       if (patch.imageProvider !== undefined)
@@ -786,7 +919,7 @@ export default function Workspace({
     if (!prompts) return;
     setPromptSaving(true);
     try {
-      const data = await api<{ prompts: Prompts; revision: number }>(
+      const data = await api<PromptDocument>(
         reset ? "workspace/prompts/reset" : "workspace/prompts",
         reset
           ? { revision: promptRevision, stages: [promptStage] }
@@ -795,6 +928,7 @@ export default function Workspace({
       );
       setPrompts(data.prompts);
       setPromptRevision(data.revision);
+      setPromptDocument(data);
       persist("prompts", data);
       persist("prompt-draft", data);
       setResetPrompt(false);
@@ -802,7 +936,7 @@ export default function Workspace({
         kind: "success",
         text: reset
           ? "Đã khôi phục prompt đang chọn."
-          : "Đã lưu ba prompt lên Firestore.",
+          : "Đã lưu prompt viết bài lên Firestore.",
       });
     } catch (error) {
       handleError(error);
@@ -814,7 +948,11 @@ export default function Workspace({
     if (!prompts) return;
     const next = { ...prompts, [promptStage]: value };
     setPrompts(next);
-    persist("prompt-draft", { prompts: next, revision: promptRevision });
+    persist("prompt-draft", {
+      prompts: next,
+      revision: promptRevision,
+      version: promptDocument?.version,
+    });
   }
   async function signOut() {
     try {
@@ -1065,8 +1203,8 @@ export default function Workspace({
                               placeholder="Ví dụ: nhấn mạnh cảm xúc, giữ nguyên đoạn kết…"
                             />
                             <span className="field-hint">
-                              Chỉ áp dụng cho cặp caption/content này và được lưu
-                              kèm khi bấm Lưu content mẫu.
+                              Chỉ áp dụng cho cặp caption/content này và được
+                              lưu kèm khi bấm Lưu content mẫu.
                             </span>
                           </label>
                           <div className="source-footer">
@@ -1316,10 +1454,6 @@ export default function Workspace({
                             <strong>{selected.length} bài</strong>
                           </div>
                           <div className="run-stat">
-                            <span>Viết đồng thời</span>
-                            <strong>Tối đa {prefs.concurrency} đội</strong>
-                          </div>
-                          <div className="run-stat">
                             <span>Đích xuất bản</span>
                             <strong>Tinfos → Trello</strong>
                           </div>
@@ -1349,6 +1483,20 @@ export default function Workspace({
                               ? "Đang xử lý…"
                               : `Viết & publish ${selected.length} bài`}
                           </button>
+                          <button
+                            disabled={!canPreview}
+                            onClick={() => void run(true)}
+                          >
+                            <Icon name="eye" size={16} />
+                            Viết thử · chưa publish
+                          </button>
+                          <p className="field-hint">
+                            Công cụ đã chọn viết bài cho từng đội.
+                          </p>
+                          <p className="field-hint">
+                            Mỗi lần bấm là một lượt viết mới; nút publish không
+                            đăng trực tiếp bản thử trước đó.
+                          </p>
                           {!busy && (
                             <p className="run-note">
                               Bài viết được publish sau khi cập nhật thành công.
@@ -1364,7 +1512,7 @@ export default function Workspace({
                             >
                               <strong>
                                 <span className="spinner" />
-                                Đang viết và xuất bản
+                                Đang quét, chọn nhân vật và viết bài
                               </strong>
                               <p>
                                 Đã chạy {elapsed} giây. Luồng có thể cần vài
@@ -1407,6 +1555,36 @@ export default function Workspace({
                           <Notice kind="warning">
                             Kết nối bị ngắt. Kiểm tra Tinfos và Trello trước khi
                             chạy lại; bài có thể đã được tạo.
+                          </Notice>
+                        </div>
+                      )}
+                      {latest.context && (
+                        <div className="panel-body">
+                          <Notice
+                            kind={
+                              latest.context.status === "fallback"
+                                ? "warning"
+                                : "info"
+                            }
+                          >
+                            <strong>
+                              {contextLabels[
+                                latest.context.analysis?.storyType ?? ""
+                              ] ?? "Ngữ cảnh chưa đọc được"}
+                            </strong>
+                            <p>
+                              {latest.context.analysis?.narrativeAction ??
+                                "Đang dùng cách gọi chung, chưa chọn tên thay thế."}
+                            </p>
+                            {latest.context.warnings.length > 0 && (
+                              <p>{latest.context.warnings.join(" ")}</p>
+                            )}
+                            {!!latest.context.modelWarnings?.length && (
+                              <details>
+                                <summary>Ghi chú tham khảo của model</summary>
+                                <p>{latest.context.modelWarnings.join(" ")}</p>
+                              </details>
+                            )}
                           </Notice>
                         </div>
                       )}
@@ -1503,26 +1681,33 @@ export default function Workspace({
               )}
               {page === "prompts" && (
                 <>
-                  <div className="prompt-layout">
-                    <div
-                      className="prompt-nav"
-                      role="group"
-                      aria-label="Các prompt"
-                    >
-                      {stages.map((stage) => (
-                        <button
-                          key={stage.id}
-                          className={promptStage === stage.id ? "active" : ""}
-                          aria-pressed={promptStage === stage.id}
-                          onClick={() => setPromptStage(stage.id)}
-                        >
-                          <span>
-                            {stage.title}
-                            <small>{stage.description}</small>
-                          </span>
-                        </button>
-                      ))}
-                    </div>
+                  <Notice>
+                    <strong>Prompt n8n · đổi cầu thủ giữa các lần viết</strong>
+                    <p>
+                      Mỗi đội gọi công cụ viết đã chọn một lần với đầy đủ prompt
+                      n8n và lineup. Với cùng caption/content và đội, lịch sử
+                      Firebase giúp tránh dùng lại cầu thủ đã xuất hiện trong
+                      caption. Không thêm bước phân tích hoặc kiểm chứng nội
+                      dung.
+                    </p>
+                  </Notice>
+                  <details className="panel prompt-policy">
+                    <summary>Cách tránh lặp cầu thủ</summary>
+                    <pre>{promptDocument?.policy}</pre>
+                  </details>
+                  <div className="row" role="group" aria-label="Chọn prompt">
+                    {stages.map((stage) => (
+                      <button
+                        key={stage.id}
+                        aria-pressed={promptStage === stage.id}
+                        className={promptStage === stage.id ? "primary" : ""}
+                        onClick={() => setPromptStage(stage.id)}
+                      >
+                        {stage.title}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="direct-prompt-layout">
                     <section className="panel">
                       <div className="panel-header">
                         <h2>
@@ -1538,8 +1723,13 @@ export default function Workspace({
                       </div>
                       <div className="panel-body">
                         <p className="field-hint" style={{ marginBottom: 15 }}>
-                          Bạn chỉnh quy tắc tại đây. Cấu trúc Title / Caption /
-                          Content và dữ liệu đội được hệ thống giữ riêng.
+                          <>
+                            Giữ các biến {"{{date}}"}, {"{{year}}"},{" "}
+                            {"{{sportTeam}}"},{"{{caption}}"}, {"{{content}}"},{" "}
+                            {"{{headCoachLine}}"},{"{{captainLine}}"},{" "}
+                            {"{{playersLine}}"} để tự điền dữ liệu. Giữ định
+                            dạng Title / Caption / Content.
+                          </>
                         </p>
                         <textarea
                           className="prompt-editor"

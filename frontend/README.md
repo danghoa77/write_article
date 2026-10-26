@@ -1,3 +1,7 @@
+> Luồng hiện hành trong source: [Prompt n8n + lịch sử tránh lặp](../backend/N8N_ROTATION_WORKFLOW.md).
+
+Luồng hiện hành: `backend/N8N_CONTEXT_WORKFLOW.md`. Hai editor contextAnalysis/rewrite và nút Viết thử hiển thị kế hoạch nhân vật trước khi đăng.
+
 # AutoWrite · Content Studio
 
 React + TypeScript + Vite, CSS thuần. Theme Dark Night – Midnight Indigo khai báo ở `src/index.css`; bố cục responsive ở `src/App.css`. Không thêm thư viện UI hoặc font từ bên ngoài.
@@ -14,11 +18,13 @@ Vite chuyển `/api` sang backend. Trên Vercel, frontend và backend dùng cùn
 - Login: tài khoản Tinfos, ghi nhớ tên tài khoản và phiên; mật khẩu do password manager của trình duyệt quản lý.
 - Viết bài: caption/content nhập tay hoặc lấy Trello, chọn nhiều đội, tick category riêng, chọn GPT/Gemini và Tavily/Serper, hậu tố slug, viết/publish một lần. Kết quả được báo theo từng đội.
 - Đội & lineup: thêm/sửa/xóa đội trên Firestore, kể cả xóa lineup cuối cùng. Xóa lineup không xóa bài hay thẻ Trello.
-- Prompt: sửa ba stage dùng chung; draft local, lưu Firestore, khôi phục riêng từng prompt.
+- Prompt: sửa bộ rule n8n chung và ba stage; xem policy có ưu tiên, version, 25 nhóm rule và prompt hiệu lực đã lưu; draft local chỉ dùng khi khớp version/revision, lưu Firestore và khôi phục từng mục.
 - Content mẫu: thêm/sửa/xóa caption/content và lưu ý riêng của từng mẫu, tìm và dùng lại làm nguồn viết; lưu Firestore theo tài khoản. Có thể bấm Lưu content mẫu ngay tại màn Viết bài.
 - Categories xuất bản: thêm/sửa/xóa danh sách mã category Tinfos và tên gợi nhớ, chọn riêng cho từng đội. Mã cần tồn tại trên Tinfos; thao tác này không tạo category/board mới tại Tinfos hay Trello.
 - Token tìm ảnh: quản lý key Tavily/Serper, hiển thị trạng thái quota/key lỗi màu đỏ, các key chưa ghi nhận lỗi màu xanh. Chưa cấu hình hiển thị cảnh báo.
-- Cài đặt: slug mặc định `danghoa123`, concurrency, công cụ mặc định, model và API key Gemini/GPT, key/token Trello. Các key được mã hóa phía server và không lưu localStorage. Sidebar không còn mục lịch sử.
+- Cài đặt: slug mặc định `danghoa123`, công cụ mặc định, model và API key Gemini/GPT, key/token Trello. Các key được mã hóa phía server và không lưu localStorage. Sidebar không còn mục lịch sử.
+
+Chọn N đội sẽ xử lý N bản viết cùng lần chạy, không có lựa chọn cố định 2/4 đội. Chi tiết kết quả hiển thị nhân vật được chọn cùng lý do phù hợp. Nhân vật chính được xác định từ caption; captain trong lineup có thể là cầu thủ nổi bật cho câu chuyện về ghi nhận/ảnh hưởng. Tên so sánh/lịch sử không bị ép thành thành viên đội đích.
 
 Category đã tick và đội đã chọn lưu theo tài khoản trong localStorage, không reset khi reload. Danh mục category lấy từ cấu hình Firestore, mặc định 44–48. Nếu xóa mã đang được dùng, đội đó cần chọn lại category; mã đã xóa không được gửi trong request mới. Lưu lineup ở Firestore khác với lựa chọn category của một lần viết trên trình duyệt.
 
@@ -35,3 +41,11 @@ Không retry tự động khi timeout hoặc chỉ publish một phần: kiểm 
 `npm run build` kiểm tra TypeScript và build production. `npm run lint` kiểm tra React/TypeScript. Backend `npm run test:browser` kiểm tra cookie, hết hạn, chống sửa identity và ngữ cảnh token riêng.
 
 Đã kiểm tra trình duyệt ở 1440×1000, 390×844 và 320×740: đăng nhập, ghi nhớ, reload giữ category, nguồn Trello, batch ba đội (API giả lập), lỗi quota một đội, lưu lineup/prompt, modal, menu mobile, tự đăng xuất khi phiên hết hiệu lực. Harness giả lập chỉ nằm ở `backend/test-results`, không đi vào application bundle.
+## Chọn nhân vật và hoàn tất lượt viết
+
+
+Tất cả bài publish và thêm caption Trello thành công thì xóa nội dung nguồn và note, reset lựa chọn nhân vật về tự động, hiển thị thông báo thành công. Đội, category, provider, slug và kết quả được giữ. Có lỗi hoặc chưa rõ trạng thái thì giữ nguồn.
+
+## Luồng n8n trực tiếp
+
+Chỉ dùng một prompt đầy đủ tại `prompts.rewrite`, điền caption/content và lineup từng đội. Bỏ giao diện phân tích/chọn nhân vật. Không còn API phân tích trong đường viết. Xem `backend/N8N_DIRECT_WORKFLOW.md`. Vẫn giữ lưu ý theo nội dung, categories, provider, thư viện và reset nguồn sau khi toàn bộ bài publish/comment thành công.

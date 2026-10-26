@@ -265,25 +265,59 @@ test('content library supports create, edit, delete, account isolation and confl
 
 test('content notes stay with each saved story and legacy samples have an empty note', async () => {
   const { service, firebase } = fixture();
-  const first = { id: 'first', title: 'First', caption: 'Caption A', content: 'Content A', note: 'Rule A' };
-  const second = { id: 'second', title: 'Second', caption: 'Caption B', content: 'Content B', note: 'Rule B' };
+  const first = {
+    id: 'first',
+    title: 'First',
+    caption: 'Caption A',
+    content: 'Content A',
+    note: 'Rule A',
+  };
+  const second = {
+    id: 'second',
+    title: 'Second',
+    caption: 'Caption B',
+    content: 'Content B',
+    note: 'Rule B',
+  };
   await service.saveLibrary('a', { revision: 0, items: [first, second] });
   a.deepEqual((await service.library('a')).items, [first, second]);
-  await service.saveLibrary('a', { revision: 1, items: [{ ...first, note: 'Edited A' }, second] });
+  await service.saveLibrary('a', {
+    revision: 1,
+    items: [{ ...first, note: 'Edited A' }, second],
+  });
   a.equal((await service.library('a')).items[0].note, 'Edited A');
   a.equal((await service.library('a')).items[1].note, 'Rule B');
   for (const note of [123, null, 'x'.repeat(30001)]) {
-    await a.rejects(() => service.saveLibrary('a', { revision: 2, items: [{ ...first, note }] }),
-      error => error.getStatus() === 400);
+    await a.rejects(
+      () =>
+        service.saveLibrary('a', { revision: 2, items: [{ ...first, note }] }),
+      (error) => error.getStatus() === 400,
+    );
   }
   firebase.data.set('users/legacy/settings/library', {
-    items: [{ id: 'old', title: 'Old sample', caption: 'Caption', content: 'Content' }], revision: 1,
+    items: [
+      {
+        id: 'old',
+        title: 'Old sample',
+        caption: 'Caption',
+        content: 'Content',
+      },
+    ],
+    revision: 1,
   });
   a.equal((await service.library('legacy')).items[0].note, '');
-  firebase.data.set('users/legacy/settings/workspace', { settings: { note: 'Old global rule' } });
+  firebase.data.set('users/legacy/settings/workspace', {
+    settings: { note: 'Old global rule' },
+  });
   a.equal('note' in (await service.get('legacy')).settings, false);
-  await service.update('legacy', { revision: 0, settings: { slugSuffix: 'custom' } });
-  a.equal('note' in firebase.data.get('users/legacy/settings/workspace').settings, false);
+  await service.update('legacy', {
+    revision: 0,
+    settings: { slugSuffix: 'custom' },
+  });
+  a.equal(
+    'note' in firebase.data.get('users/legacy/settings/workspace').settings,
+    false,
+  );
 });
 test('workspace routes enforce session ownership and keep the original source Trello request', async () => {
   const { firebase, config } = fixture();
@@ -303,6 +337,18 @@ test('workspace routes enforce session ownership and keep the original source Tr
     return 'upstream';
   };
   const calls = [];
+  const scans = [];
+  const previews = [];
+  const scanned = {
+    summary: 'Source scan only',
+    scan: {
+      storyType: 'lifestyle',
+      identityCase: 'none',
+      eventSpecific: 'none',
+      reason: 'Anonymous source.',
+    },
+    characters: [],
+  };
   const module = await Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(FirebaseService)
     .useValue(firebase)
@@ -315,6 +361,26 @@ test('workspace routes enforce session ownership and keep the original source Tr
         return { success: true, results: [] };
       },
     })
+    .overrideProvider(
+      require('../dist/modules/content/character-selection.service.js')
+        .CharacterSelectionService,
+    )
+    .useValue({
+      analyze: async (body) => {
+        scans.push(body);
+        return scanned;
+      },
+    })
+    .overrideProvider(
+      require('../dist/modules/content/content-generation.service.js')
+        .ContentGenerationService,
+    )
+    .useValue({
+      batch: async (body) => {
+        previews.push(body);
+        return { success: true, analysis: scanned, plans: [], results: [] };
+      },
+    })
     .compile();
   const app = module.createNestApplication();
   app.setGlobalPrefix('api');
@@ -325,6 +391,8 @@ test('workspace routes enforce session ownership and keep the original source Tr
     const http = request(app.getHttpServer());
     await http.get('/api/workspace/settings').expect(401);
     await http.get('/api/workspace/library').expect(401);
+    await http.post('/api/workspace/analyze').send({}).expect(404);
+    await http.post('/api/workspace/preview').send({}).expect(401);
     const login = await http
       .post('/api/auth/browser/login')
       .send({ username: 'owner', password: 'test' })
@@ -365,6 +433,33 @@ test('workspace routes enforce session ownership and keep the original source Tr
       .set('Cookie', cookie)
       .expect(200);
     a.equal(source.body.content, 'Original content');
+    await http.post('/api/workspace/analyze').set('Cookie', cookie).send({}).expect(404);
+    await http
+      .post('/api/workspace/preview')
+      .set('Cookie', cookie)
+      .send({
+        caption: 'Preview',
+        content: 'Source',
+        teams: [{ sport: 'AFL', team: 'Adelaide Crows' }],
+        prompts: { writer: 'STALE CLIENT WRITER' },
+      })
+      .expect(201);
+    a.equal(calls.length, 0);
+    a.notEqual(previews[0].prompts.writer, 'STALE CLIENT WRITER');
+    a.ok(previews[0].prompts.rewrite.includes('20. Current Roster'));
+    a.deepEqual(Object.keys(previews[0].prompts), ['rewrite']);
+    await http
+      .post('/api/workspace/preview')
+      .set('Cookie', cookie)
+      .send({
+        caption: 'Preview',
+        content: 'Source',
+        teams: [{ sport: 'AFL', team: 'Adelaide Crows' }],
+        promptVersion: 'n8n-rules-v2',
+        promptRevision: 999,
+      })
+      .expect(409);
+    a.equal(previews.length, 1);
     await http
       .post('/api/workspace/run')
       .set('Cookie', cookie)
@@ -375,13 +470,27 @@ test('workspace routes enforce session ownership and keep the original source Tr
       .expect(201);
     a.equal(calls[0].slugSuffix, 'danghoa123');
     a.equal(calls[0].prompt, '');
-    for (const [caption, prompt] of [['Caption A', 'Rule A'], ['Caption B', 'Rule B'], ['Caption C', undefined]]) {
-      await http.post('/api/workspace/run').set('Cookie', cookie).send({
-        caption, content: 'Content for ' + caption, prompt,
-        teams: [{ team: 'Adelaide Crows', sport: 'AFL' }], imageProvider: 'tavily',
-      }).expect(201);
+    for (const [caption, prompt] of [
+      ['Caption A', 'Rule A'],
+      ['Caption B', 'Rule B'],
+      ['Caption C', undefined],
+    ]) {
+      await http
+        .post('/api/workspace/run')
+        .set('Cookie', cookie)
+        .send({
+          caption,
+          content: 'Content for ' + caption,
+          prompt,
+          teams: [{ team: 'Adelaide Crows', sport: 'AFL' }],
+          imageProvider: 'tavily',
+        })
+        .expect(201);
     }
-    a.deepEqual(calls.slice(1).map(body => body.prompt), ['Rule A', 'Rule B', '']);
+    a.deepEqual(
+      calls.slice(1).map((body) => body.prompt),
+      ['Rule A', 'Rule B', ''],
+    );
     await http
       .put('/api/workspace/library')
       .set('Cookie', cookie)

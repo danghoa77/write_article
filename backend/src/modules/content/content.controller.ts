@@ -4,7 +4,6 @@ import { ContentConfigService } from './content-config.service.js';
 import { ContentService } from './content.service.js';
 import { ContentWorkflowService } from './content-workflow.service.js';
 import { TrelloService } from './trello.service.js';
-import { CharacterSelectionService } from './character-selection.service.js';
 import { ContentGenerationService } from './content-generation.service.js';
 import type {
   CompleteWorkflowBody,
@@ -20,7 +19,6 @@ export class ContentController {
     private readonly content: ContentService,
     private readonly workflow: ContentWorkflowService,
     private readonly trello: TrelloService,
-    private readonly selection: CharacterSelectionService,
     private readonly generation: ContentGenerationService,
     private readonly teams: TeamSettingsService,
   ) {}
@@ -29,6 +27,8 @@ export class ContentController {
   defaults() {
     return {
       ...this.config.defaults(),
+      pipelinePolicy: undefined,
+      pipelinePrompts: { rewrite: this.config.defaults().prompt },
       credentials: this.config.credentialStatus(),
     };
   }
@@ -41,11 +41,6 @@ export class ContentController {
   @Post('generate')
   generate(@Body() body: GenerateContentBody) {
     return this.generation.single(body);
-  }
-
-  @Post('plan')
-  plan(@Body() body: BatchContentBody) {
-    return this.selection.plan(body);
   }
 
   @Post('generate-batch')

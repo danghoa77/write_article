@@ -5,6 +5,37 @@ export type Person = {
   careerStage: "rookie" | "established" | "veteran" | "unknown";
   importance: "star" | "supporting" | "unknown";
   traits: string[];
+  position?: string;
+};
+export type CharacterMode = "auto" | "preserve" | "manual";
+export type CharacterSelection = {
+  sport: string;
+  team: string;
+  sourceName: string;
+  targetName: string;
+};
+export type TeamFact = { sport: string; team: string; facts: string };
+export type CharacterSettings = {
+  characterMode: CharacterMode;
+  characterSelections: CharacterSelection[];
+  teamFacts: TeamFact[];
+};
+export type StoryAnalysis = {
+  summary: string;
+  scan?: {
+    storyType: "sad_news" | "lifestyle" | "match" | "recognition" | "other";
+    identityCase: "none" | "fictional" | "real" | "mixed" | "uncertain";
+    eventSpecific: "none" | "personal" | "match";
+    reason: string;
+  };
+  characters: {
+    name: string;
+    identity: "real" | "fictional" | "unspecified";
+    role: Person["role"];
+    narrativeRole?: "primary" | "supporting" | "reference";
+    affiliation?: "source_team" | "external" | "unknown";
+    requiredTraits: string[];
+  }[];
 };
 export type Team = {
   team: string;
@@ -17,8 +48,18 @@ export type Team = {
   lineupAsOf?: string;
   personnel?: Person[];
 };
-export type PromptStage = "analysis" | "characterKnowledge" | "writer";
+export type PromptStage = "rewrite";
 export type Prompts = Record<PromptStage, string>;
+export type PromptDocument = {
+  prompts: Prompts;
+  revision: number;
+  version?: string;
+  currentVersion?: string;
+  policy?: string;
+  ruleIds?: string[];
+  needsSync?: boolean;
+  effectivePrompts?: Partial<Record<PromptStage, string>>;
+};
 export type Config = {
   teams: Team[];
   prompt: string;
@@ -30,7 +71,6 @@ export type Session = { username: string; expiresAt: number };
 export type Category = { id: number; name: string };
 export type WorkspaceOptions = {
   slugSuffix: string;
-  concurrency: number;
   textProvider: "gemini" | "gpt";
   imageProvider: "tavily" | "serper";
   geminiModel: string;
@@ -60,10 +100,37 @@ export type Preferences = {
   textProvider: "gemini" | "gpt";
   imageProvider: "tavily" | "serper";
   slugSuffix: string;
-  concurrency: number;
   listId: string;
 };
 export type Result = {
+  rotation?: {
+    selected: string[];
+    excluded: string[];
+    cycle: number;
+    note: string;
+  };
+  preview?: boolean;
+  requiresReview?: boolean;
+  reviewWarnings?: string[];
+  article?: { title: string; caption: string; content: string };
+  characterPlan?: {
+    team: string;
+    sport: string;
+    warnings: string[];
+    mappings: {
+      sourceId: string;
+      sourceName: string | null;
+      target: string;
+      action: string;
+      reason: string;
+      role: string;
+      status: string;
+      knowledgeSource?: string;
+      backgroundSource?: string;
+      position?: string;
+      roleException?: string;
+    }[];
+  };
   team: string;
   sport?: string;
   success: boolean;
@@ -78,8 +145,26 @@ export type Result = {
   statusCode?: number;
   error?: unknown;
   message?: string;
+  characters?: {
+    source: string;
+    target: string;
+    role: string;
+    reason?: string;
+  }[];
 };
 export type Run = {
+  context?: {
+    status: "ready" | "fallback";
+    warnings: string[];
+    analysis: {
+      storyType: string;
+      hasIndividualFocus: boolean;
+      narrativeAction: string;
+      keyBeats: string[];
+    } | null;
+    modelWarnings?: string[];
+  };
+  analysis?: StoryAnalysis;
   id: string;
   time: string;
   success: boolean;

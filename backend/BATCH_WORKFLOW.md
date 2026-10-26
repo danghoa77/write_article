@@ -1,3 +1,9 @@
+> Luồng hiện hành trong source: [Prompt n8n + lịch sử tránh lặp, n8n-rotation-v5](./N8N_ROTATION_WORKFLOW.md). Mô tả các phiên bản trước bên dưới được giữ để tham chiếu.
+
+> Luồng hiện hành: [Ngữ cảnh Gemini → chọn nhân vật → Writer, n8n-context-v4](./N8N_CONTEXT_WORKFLOW.md). Các phần mô tả n8n-direct-v3 bên dưới được giữ làm lịch sử.
+
+> Luồng hiện hành: [n8n trực tiếp](./N8N_DIRECT_WORKFLOW.md), không có bước chọn nhân vật riêng.
+
 # Chọn nhiều đội và chạy một lần
 
 Frontend gọi một lần `POST /api/content/run`:
@@ -11,8 +17,7 @@ Frontend gọi một lần `POST /api/content/run`:
     { "team": "New England Patriots", "sport": "NFL" }
   ],
   "textProvider": "gemini",
-  "imageProvider": "tavily",
-  "concurrency": 3
+  "imageProvider": "tavily"
 }
 ```
 
@@ -28,13 +33,13 @@ Mỗi lựa chọn `{team,sport}` được đối chiếu với cấu hình có 
 - Khi chạy `/run`, FE cũng gửi Firebase ID token trong header để lấy lineup riêng đã lưu. Nếu có token nhưng không hợp lệ thì trả 401. Nếu Firestore lỗi thì trả 503; không âm thầm đổi sang lineup mặc định.
 - Không có header Firebase thì `/run` chỉ tra 5 đội mặc định. Nếu có Firebase nhưng chưa lưu thì dùng 5 đội mặc định. Nếu đã lưu thì chỉ dùng danh sách đã lưu, không ghép thêm đội mặc định.
 - Bỏ `teams` khỏi `/run` sẽ chạy toàn bộ danh sách hiệu lực. FE nên luôn gửi các đội người dùng đang chọn để tránh đăng ngoài ý muốn.
-- Body cũ gửi đầy đủ từng `ContentTeam` vẫn dùng được cho một lần chạy và không sửa cấu hình đã lưu. `/generate`, `/generate-batch`, `/plan` vẫn nhận đầy đủ lineup như trước.
+- Body cũ gửi đầy đủ từng `ContentTeam` vẫn dùng được cho một lần chạy và không sửa cấu hình đã lưu. `/generate`, `/generate-batch` vẫn nhận đầy đủ lineup như trước.
 
 Firebase ID token chỉ dùng xác định người sở hữu cấu hình; các request Tinfos vẫn dùng cookie auth-session như workflow. Header/body của API đăng bài, publish và tìm ảnh giữ nguyên.
 
 ## Xử lý và kết quả theo từng đội
 
-Server đọc nguồn một lần và phân tích câu chuyện một lần. Mỗi đội được đối chiếu lineup riêng. Bước viết dùng tối đa `concurrency` worker (1–4, mặc định 2). Ảnh và các thao tác đăng bài được xử lý lần lượt nội bộ để dùng lịch sử ảnh trong RAM; người dùng chỉ bấm một lần.
+Server đọc nguồn một lần rồi gọi viết trực tiếp bằng prompt n8n cho từng đội. Mỗi đội được đối chiếu lineup riêng; tất cả đội đã chọn chạy song song ở bước viết và đăng bài. Không có mức cố định 2/4 đội hay giới hạn danh mục 50 đội; giới hạn kích thước document vẫn áp dụng. Trường concurrency từ client cũ không điều tiết số tác vụ nữa. Kết quả giữ thứ tự đội đầu vào và lỗi riêng từng đội không chặn các đội còn lại.
 
 Mỗi bài: tạo nháp → tìm/chèn ảnh → cập nhật thành công → publish → kiểm tra slug → lấy `trello[0].cardId` trong phản hồi của chính bài đó → thêm caption vào thẻ đó. Không dùng card nguồn hoặc card của đội khác.
 
@@ -50,7 +55,7 @@ Response HTTP 201 của batch có:
   "textProvider": "gemini",
   "results": [
     { "team": "Adelaide Crows", "sport": "AFL", "success": true, "postId": "post1", "cardId": "card1", "published": true, "commented": true },
-    { "team": "Denver Broncos", "sport": "NFL Football", "success": false, "stage": "plan", "published": false, "statusCode": 422, "error": { "code": "CHARACTER_REVIEW_REQUIRED" } },
+    { "team": "Denver Broncos", "sport": "NFL Football", "success": false, "stage": "generate", "published": false, "statusCode": 422, "error": { "code": "PROVIDER_REQUEST_FAILED" } },
     { "team": "New England Patriots", "sport": "NFL", "success": true, "postId": "post3", "cardId": "card3", "published": true, "commented": true }
   ]
 }
@@ -58,6 +63,6 @@ Response HTTP 201 của batch có:
 
 FE phải đọc `success`, `summary` và từng result; HTTP 201 không có nghĩa tất cả đội đều thành công. Thứ tự results trùng thứ tự lựa chọn. Trường `sport` giữ tên trong cấu hình (ví dụ NFL Football của Denver).
 
-Lỗi riêng từng đội ở bước chọn nhân vật/viết/ảnh/cập nhật/publish/comment được ghi vào result và các đội còn lại tiếp tục. Lỗi chung như nguồn không đọc được, thiếu credential, đăng nhập thất bại hoặc phân tích nguồn lỗi vẫn dừng request. Request một đội giữ cách trả lỗi HTTP như trước.
+Lỗi riêng từng đội ở bước viết/ảnh/cập nhật/publish/comment được ghi vào result và các đội còn lại tiếp tục. Lỗi chung như nguồn không đọc được, thiếu credential, đăng nhập thất bại hoặc đọc nguồn lỗi vẫn dừng request. Request một đội giữ cách trả lỗi HTTP như trước.
 
 Các thao tác ngoài đã hoàn tất không tự rollback. Nếu đã publish nhưng comment Trello lỗi, result giữ `published:true`; FE không tự chạy lại toàn bộ batch vì có thể tạo bài trùng. Bản này xử lý đồng bộ, chưa có job bền hoặc hàng đợi; Vercel có thể ngắt một request quá lâu. Chưa bảo đảm batch sống tiếp sau timeout/đóng request và không tự retry publish.

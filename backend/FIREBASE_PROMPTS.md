@@ -1,3 +1,7 @@
+> Luồng hiện hành trong source: [Prompt n8n + lịch sử tránh lặp, n8n-rotation-v5](./N8N_ROTATION_WORKFLOW.md). Mô tả các phiên bản trước bên dưới được giữ để tham chiếu.
+
+> Luồng hiện hành: [Ngữ cảnh Gemini → chọn nhân vật → Writer, n8n-context-v4](./N8N_CONTEXT_WORKFLOW.md). Các phần mô tả n8n-direct-v3 bên dưới được giữ làm lịch sử.
+
 # Firestore và trình chỉnh sửa prompt cho FE
 
 ## Trạng thái hiện tại
@@ -45,92 +49,20 @@ Không dùng `auth-session` của Tinfos làm Firebase ID token. Backend xác mi
 | API | Công dụng |
 | --- | --- |
 | `GET /api/content/prompts` | Đọc prompt hiệu lực đã lưu của tài khoản, kèm revision |
-| `GET /api/content/prompts/templates` | Đọc ba prompt mặc định từ source |
-| `PATCH /api/content/prompts` | Lưu một hoặc nhiều prompt vào Firestore |
-| `POST /api/content/prompts/reset` | Khôi phục một hoặc toàn bộ prompt về mặc định |
+| `GET /api/content/prompts/templates` | Đọc toàn bộ prompt n8n mặc định từ source |
+| `PATCH /api/content/prompts` | Lưu prompt rewrite vào Firestore |
+| `POST /api/content/prompts/reset` | Khôi phục toàn bộ prompt n8n |
 
-Ba trường được chỉnh:
-
-- `analysis`: rule phân tích nhân vật trong bài gốc.
-- `characterKnowledge`: rule bổ sung kiến thức và chọn người tương thích.
-- `writer`: rule viết Title/Caption/Content.
-
-Body PATCH ví dụ:
+Một prompt đầy đủ `prompts.rewrite` được dùng cho cả GPT và Gemini, phiên bản `n8n-direct-v3`.
 
 ```json
-{
-  "revision": 0,
-  "prompts": {
-    "writer": "Toàn bộ prompt viết bài do người dùng chỉnh..."
-  }
-}
+{"revision": 0, "prompts": {"rewrite": "Toàn bộ prompt n8n, gồm các biến dữ liệu và định dạng Title/Caption/Content"}}
 ```
 
-Chỉ sửa writer thì analysis và characterKnowledge không đổi. Không được gửi API key, model, đội hình hay field cấu hình khác vào API này. Prompt phải là chuỗi không rỗng, tối đa 120000 byte UTF-8 cho mỗi phần. Output contract Title/Caption/Content và schema phân tích được backend giữ riêng để FE chỉnh rule mà parser vẫn dùng cùng cấu trúc.
+Reset: `{"revision":1,"stages":["rewrite"]}`. Prompt không rỗng, tối đa 120000 byte UTF-8. API chỉ cho chỉnh prompt, không cho sửa key hoặc đội qua endpoint này.
 
-Response:
+Khi đọc bản multi-stage cũ, server lưu backup trong subcollection versions rồi khôi phục toàn bộ prompt gốc. Không thay đổi dữ liệu lineup hoặc API key. Chi tiết migration, biến dữ liệu, FE và đường chạy ở [N8N_DIRECT_WORKFLOW.md](./N8N_DIRECT_WORKFLOW.md).
 
-```json
-{
-  "prompts": {
-    "analysis": "...",
-    "characterKnowledge": "...",
-    "writer": "..."
-  },
-  "customizedStages": ["writer"],
-  "revision": 1,
-  "updatedAt": "ISO timestamp"
-}
-```
+Browser dùng các API `/api/workspace/prompts` với session Tinfos; không cần đăng nhập Firebase riêng. API Firebase ID token cũ vẫn dùng namespace riêng.
 
-Mỗi lần lưu dùng revision của bản vừa đọc. Nếu tài khoản khác trên máy khác vừa sửa, revision cũ trả HTTP 409; FE tải lại và cho người dùng xử lý thay vì âm thầm ghi đè.
-
-Reset:
-
-```json
-{ "revision": 1, "stages": ["writer"] }
-```
-
-Không truyền stages sẽ reset cả ba phần. Reset chỉ bỏ override đã lưu, không chỉnh file prompt mặc định hoặc xóa các dữ liệu cầu thủ/lineup.
-
-## Dùng prompt tùy chỉnh khi chạy flow
-
-Các endpoint `/generate`, `/plan`, `/generate-batch`, `/run` đều nhận trường `prompts` với cùng ba khóa. Đây là override chỉ áp dụng cho request đó; không cần đọc database ở mỗi bước xử lý, và mỗi lần chạy giữ một bộ prompt nhất quán.
-
-Luồng FE:
-
-```text
-Đăng nhập Firebase
-→ GET /content/prompts
-→ hiển thị ba ô editor, người dùng chỉnh rule
-→ PATCH /content/prompts để lưu nếu cần
-→ POST /content/generate-batch hoặc /content/run, gửi kèm prompts từ bản đang hiển thị
-```
-
-Ví dụ phần input chạy bài:
-
-```json
-{
-  "textProvider": "gemini",
-  "imageProvider": "serper",
-  "prompts": {
-    "analysis": "Prompt phân tích đã chỉnh",
-    "characterKnowledge": "Prompt bổ sung kiến thức đã chỉnh",
-    "writer": "Prompt viết bài đã chỉnh"
-  }
-}
-```
-
-Các input teams/caption/content/login vẫn dùng cấu trúc cũ. Không truyền một khóa trong prompts thì khóa đó dùng mặc định từ source. **Lưu Firestore không tự thay prompt của một request chạy không gửi prompts**: FE phải tải và gửi bộ đã lưu. Trường `prompt` cũ vẫn là stylePreferences cho một lần viết; để thay toàn bộ rule writer phải dùng `prompts.writer`.
-
-Prompt override dùng chung cho GPT và Gemini đã chọn, không tự đổi nhà cung cấp và không thay body/header của API Tinfos hoặc image search. Ràng buộc code về lineup và ánh xạ nhân vật vẫn được giữ.
-
-## Deploy
-
-`FIREBASE_SERVICE_ACCOUNT_JSON` là biến môi trường backend. Trên Vercel, thêm giá trị JSON service account vào Project Settings → Environment Variables, rồi deploy lại; file `.env` local không được upload. Không tạo Firebase project mới mỗi lần deploy.
-
-Admin SDK không dựa vào Firestore Security Rules của web client; vì vậy các API prompt đã được bảo vệ bằng Firebase ID token và lưu tách theo UID. Chưa có FE hoặc thay đổi nào được deploy trong bước này.
-
-## Kiểm tra
-
-`npm run test:prompts` kiểm tra với adapter Firestore giả lập: lưu xuyên service instance, tách người dùng, xung đột revision, reset, từ chối sửa field ngoài prompt và sử dụng cả ba prompt tùy chỉnh trong flow. Kiểm tra cloud thật đã chạy riêng như mô tả đầu file.
+`prompt` là lưu ý riêng của cặp caption/content, không phải toàn bộ template. Browser tải prompt server, cho sửa một editor và gửi `prompts.rewrite`, version/revision trong `/workspace/run` hoặc `/workspace/preview`. Bản nháp khác version/revision không được dùng. Không ghép policy phân tích/chọn nhân vật vào prompt.
