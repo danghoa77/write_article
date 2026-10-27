@@ -147,21 +147,28 @@ test('writer repeat is rejected, not silently published or followed by a paid re
   a.equal(f.calls.length, 2);
 });
 test('A then B then C: each request only receives the remaining roster candidates', async () => {
-  const f = setup(prompt => {
-    const pool = prompt.match(/- Known current players.*?: ([^\n]+)/)[1].split(', ');
+  const f = setup((prompt) => {
+    const pool = prompt
+      .match(/- Known current players.*?: ([^\n]+)/)[1]
+      .split(', ');
     return article(pool[0]);
   });
-  const three = { ...team, players: ['Player Alpha', 'Player Beta', 'Player Gamma'] };
+  const three = {
+    ...team,
+    players: ['Player Alpha', 'Player Beta', 'Player Gamma'],
+  };
   for (const [index, name] of three.players.entries()) {
     const result = await f.generation.batch({ ...source, teams: [three] });
     a.equal(result.success, true);
     a.deepEqual(result.results[0].rotation.selected, [name]);
-    const row = f.calls[index][0].match(/- Known current players.*?: ([^\n]+)/)[1];
+    const row = f.calls[index][0].match(
+      /- Known current players.*?: ([^\n]+)/,
+    )[1];
     a.equal(row, three.players.slice(index).join(', '));
   }
 });
 
-test('next cycle starts after every known player has been used', async () => {
+test('next cycle starts once the used pool exceeds 75 percent', async () => {
   const f = setup((prompt) =>
     article(
       prompt.includes('REPEAT-WRITE VARIATION')
@@ -175,6 +182,37 @@ test('next cycle starts after every known player has been used', async () => {
   a.equal(r.results[0].rotation.cycle, 2);
   a.deepEqual(r.results[0].rotation.excluded, []);
 });
+test('exactly 75 percent retains exclusions; over 75 percent restores the full roster', async () => {
+  const f = setup(() => article('Player Alpha'));
+  for (const count of [4, 5]) {
+    const roster = {
+      ...team,
+      team: `Pool ${count}`,
+      players: Array.from({ length: count }, (_, i) => `Player ${i}`),
+      captain: 'Player 0',
+    };
+    const usedCount = count === 4 ? 3 : 4;
+    for (const name of roster.players.slice(0, usedCount)) {
+      const ticket = await f.rotation.begin(
+        source.caption,
+        source.content,
+        roster,
+      );
+      await f.rotation.complete(ticket, {
+        caption: `${name} thanks volunteers`,
+      });
+    }
+    const next = await f.rotation.begin(source.caption, source.content, roster);
+    const filtered = f.rotation.writerTeam(roster, next);
+    a.equal(next.cycle, count === 4 ? 1 : 2);
+    a.deepEqual(next.excluded, count === 4 ? roster.players.slice(0, 3) : []);
+    a.deepEqual(filtered.players, count === 4 ? ['Player 3'] : roster.players);
+    a.equal(filtered.captain, count === 4 ? null : 'Player 0');
+    a.equal(roster.players.length, count);
+    await f.rotation.release(next);
+  }
+});
+
 test('source, team and account histories are independent; whitespace-only changes retain history', async () => {
   const f = setup(() => article('Player Alpha'));
   await f.generation.batch(source);

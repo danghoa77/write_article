@@ -81,7 +81,8 @@ export class CharacterRotationService {
           ),
         ) as string[];
         let cycle = saved.cycle ?? 1;
-        if (candidates.length && excluded.length === candidates.length) {
+        // Strictly over 75%: exactly three out of four must not reset yet.
+        if (candidates.length && excluded.length * 4 > candidates.length * 3) {
           excluded = [];
           cycle++;
         }

@@ -27,7 +27,7 @@ Một lần gọi writer cho mỗi đội, không giới hạn tổng số độ
 
 Tên được nhận diện bằng đối chiếu nguyên tên có ranh giới từ với `players` và hồ sơ `personnel` có role player. Chỉ caption được dùng để ghi nhận: nhắc một người trong phần so sánh ở thân bài không tiêu thụ lượt. Không tự suy đoán tên chưa có trong dữ liệu. Vì vậy cựu cầu thủ từ kiến thức model nhưng không có trong hồ sơ, bí danh hoặc tên viết tắt không khớp chưa được bảo đảm chống lặp. HLV không bị thay chỉ để tạo sự khác biệt.
 
-Bản viết thử cũng tiêu thụ lượt khi viết thành công, kể cả khi chưa publish hoặc publish sau đó lỗi. Nếu model lặp lại tên bị loại, trả 422, không lưu lượt và không tạo draft. Nếu không có tên nhận diện được, trả kết quả với ghi chú rõ ràng, không tạo lịch sử đoán mò. Hết toàn bộ danh sách đã biết thì bắt đầu vòng mới; không hứa luân phiên qua những người không phù hợp với rule gốc.
+Bản viết thử cũng tiêu thụ lượt khi viết thành công, kể cả khi chưa publish hoặc publish sau đó lỗi. Nếu model lặp lại tên bị loại, trả 422, không lưu lượt và không tạo draft. Nếu không có tên nhận diện được, trả kết quả với ghi chú rõ ràng, không tạo lịch sử đoán mò. Khi số cầu thủ đã dùng vượt 75% danh sách đã biết, lượt viết tiếp theo bắt đầu vòng mới với đầy đủ lineup; đúng 75% chưa reset. Ví dụ danh sách 20 người reset sau khi đã dùng 16 người; không hứa luân phiên qua những người không phù hợp với rule gốc.
 
 Firestore transaction giữ lease 10 phút cho cùng nguồn và đội, chống hai request đồng thời dùng cùng lịch sử; lỗi viết trả lease, không tiêu thụ cầu thủ. Dữ liệu vẫn còn qua lần khởi động Vercel. Chưa có API xóa lịch sử thủ công. API public không có workspace scope dùng scope public, còn workspace dùng UID riêng.
 
