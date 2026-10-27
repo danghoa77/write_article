@@ -97,9 +97,45 @@ test('same source and team exclude prior caption player, not names appearing onl
   const r = await f.generation.batch(source);
   a.deepEqual(r.results[0].rotation.excluded, ['Player Alpha']);
   a.deepEqual(r.results[0].rotation.selected, ['Player Beta']);
-  a.match(f.calls[1][0], /Player Alpha, Player Beta/);
+  const filtered = f.rotation.writerTeam(team, { excluded: ['Player Alpha'] });
+  a.deepEqual(filtered.players, ['Player Beta']);
+  a.equal(filtered.captain, null);
+  a.ok(
+    f.calls[1][0].startsWith(
+      f.content.renderPrompt({
+        team: filtered,
+        caption: source.caption,
+        content: source.content,
+      }),
+    ),
+  );
+  a.doesNotMatch(f.calls[1][0], /- Captain: Player Alpha/);
+  a.deepEqual(team.players, ['Player Alpha', 'Player Beta']);
   a.match(f.calls[1][0], /35 years/);
   a.equal(f.calls.length, 2);
+});
+
+test('exclusion removes roster profiles and captain annotations, retaining other captains and coach', () => {
+  const f = setup(() => article('Player Beta'));
+  const original = {
+    ...team,
+    captain: 'Player Alpha (captain), Player Beta',
+    personnel: [
+      { name: 'Player Alpha', role: 'player' },
+      { name: 'Player Beta', role: 'player' },
+    ],
+  };
+  const filtered = f.rotation.writerTeam(original, {
+    excluded: ['player alpha'],
+  });
+  a.deepEqual(filtered.players, ['Player Beta']);
+  a.equal(filtered.captain, 'Player Beta');
+  a.deepEqual(
+    filtered.personnel.map((p) => p.name),
+    ['Player Beta'],
+  );
+  a.equal(filtered.headCoach, 'Coach One');
+  a.equal(original.personnel.length, 2);
 });
 test('writer repeat is rejected, not silently published or followed by a paid repair call', async () => {
   const f = setup(() => article('Player Alpha'));
@@ -110,6 +146,21 @@ test('writer repeat is rejected, not silently published or followed by a paid re
   a.equal(r.results[0].error.code, 'CHARACTER_REPEATED');
   a.equal(f.calls.length, 2);
 });
+test('A then B then C: each request only receives the remaining roster candidates', async () => {
+  const f = setup(prompt => {
+    const pool = prompt.match(/- Known current players.*?: ([^\n]+)/)[1].split(', ');
+    return article(pool[0]);
+  });
+  const three = { ...team, players: ['Player Alpha', 'Player Beta', 'Player Gamma'] };
+  for (const [index, name] of three.players.entries()) {
+    const result = await f.generation.batch({ ...source, teams: [three] });
+    a.equal(result.success, true);
+    a.deepEqual(result.results[0].rotation.selected, [name]);
+    const row = f.calls[index][0].match(/- Known current players.*?: ([^\n]+)/)[1];
+    a.equal(row, three.players.slice(index).join(', '));
+  }
+});
+
 test('next cycle starts after every known player has been used', async () => {
   const f = setup((prompt) =>
     article(

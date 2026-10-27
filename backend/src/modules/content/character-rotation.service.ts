@@ -103,6 +103,28 @@ export class CharacterRotationService {
     }
   }
 
+  writerTeam(team: ContentTeam, ticket: Ticket): ContentTeam {
+    if (!ticket.excluded.length) return team;
+    const excluded = new Set(ticket.excluded.map(normalize));
+    return {
+      ...team,
+      players: team.players.filter((name) => !excluded.has(normalize(name))),
+      personnel: team.personnel?.filter(
+        (person) => !excluded.has(normalize(person.name)),
+      ),
+      // Captains may be stored as a comma-separated list, with role annotations.
+      captain:
+        team.captain
+          ?.split(/[,;|\n]+/)
+          .map((name) => name.trim())
+          .filter(
+            (name) =>
+              name && !ticket.excluded.some((old) => contains(name, old)),
+          )
+          .join(', ') || null,
+    };
+  }
+
   directive(ticket: Ticket) {
     if (!ticket.excluded.length) return '';
     return (
@@ -110,7 +132,7 @@ export class CharacterRotationService {
       'Previous versions used these roster players as caption characters: ' +
       JSON.stringify(ticket.excluded) +
       '.\n' +
-      'If this adaptation calls for a player, choose a DIFFERENT suitable player from the supplied lineup using the original rules. ' +
+      'Those players have been REMOVED from the eligible target lineup. The remaining supplied lineup is the exclusive player pool for this adaptation; choose a suitable player ONLY from that remaining pool. Do not restore an excluded player from memory, source text, captain information or earlier versions. ' +
       'Do not use those names in the new caption. Do not substitute a coach merely for variety. ' +
       'Keep the full story, details, numbers, tone and output format required above. This is only a player repetition constraint; do not fact-check, summarize or generalize the source.\n'
     );
@@ -153,7 +175,7 @@ export class CharacterRotationService {
       excluded: ticket.excluded,
       cycle: ticket.cycle,
       note: selected.length
-        ? 'Đổi cầu thủ cho cùng nguồn và đội; model tự chọn theo prompt n8n.'
+        ? 'Cầu thủ đã dùng được loại khỏi lineup gửi đi; model chọn từ các cầu thủ còn lại theo prompt n8n.'
         : 'Caption không có tên cầu thủ nhận diện được trong lineup/hồ sơ; không tự đoán nhân vật để lưu lịch sử.',
     };
   }

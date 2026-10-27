@@ -47,7 +47,7 @@ export class PromptSettingsService {
       currentVersion: PROMPT_VERSION,
       mode: 'n8n-rotation',
       policy:
-        'Giữ nguyên prompt n8n. Lịch sử Firebase chỉ giúp tránh lặp cầu thủ trong caption của cùng nguồn và đội; không thêm bước phân tích hay xác minh nội dung. Chỉ nhận diện tên từ lineup/hồ sơ đã lưu. HLV không bị thay chỉ để tạo sự khác biệt.',
+        'Giữ nguyên prompt n8n. Lịch sử Firebase loại cầu thủ đã dùng khỏi lineup và captain gửi cho model khi viết lại cùng nguồn và đội; không thêm bước phân tích hay xác minh nội dung. Chỉ nhận diện tên từ lineup/hồ sơ đã lưu. HLV không bị thay chỉ để tạo sự khác biệt.',
       ruleIds: RULE_IDS,
       needsSync: false,
       customizedStages: Object.keys(overrides),

@@ -50,7 +50,7 @@ export class ContentGenerationService {
         try {
           ticket = await this.rotation.begin(body.caption, body.content, team);
           const prompt = this.content.renderPrompt({
-            team,
+            team: this.rotation.writerTeam(team, ticket),
             caption: body.caption,
             content: body.content,
             prompt: body.prompts?.rewrite ?? this.config.defaults().prompt,

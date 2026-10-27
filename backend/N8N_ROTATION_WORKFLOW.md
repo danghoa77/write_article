@@ -17,7 +17,7 @@ flowchart TD
 
 ## Những gì được giữ
 
-`config/rewrite-prompt.md` vẫn là toàn bộ prompt node `g1_new1` của nhánh `start` trong workflow. Không sửa rule, không cắt nguồn thành bản tóm tắt, không thu hẹp lineup, không ghép context-writer-policy và không gọi Analyzer. Model tự chọn nhân vật theo prompt gốc. Lượt đầu chưa có lịch sử nhận đúng prompt đã điền biến, cộng lưu ý riêng nếu có. Lượt sau chỉ thêm ràng buộc tránh lặp cầu thủ; không yêu cầu xác minh sự kiện hay khái quát hóa số liệu.
+`config/rewrite-prompt.md` vẫn là toàn bộ prompt node `g1_new1` của nhánh `start` trong workflow. Không sửa rule, không cắt nguồn thành bản tóm tắt, không ghép context-writer-policy và không gọi Analyzer. Model tự chọn nhân vật theo prompt gốc. Lượt đầu chưa có lịch sử nhận đúng prompt đã điền biến, cộng lưu ý riêng nếu có. Lượt sau loại các cầu thủ đã dùng khỏi players, personnel và captain trước khi điền prompt; chỉ danh sách còn lại được dùng làm nguồn chọn cầu thủ. Bổ sung ràng buộc không khôi phục người bị loại từ trí nhớ hay nội dung nguồn; không yêu cầu xác minh sự kiện hay khái quát hóa số liệu.
 
 Một lần gọi writer cho mỗi đội, không giới hạn tổng số đội. Không tự đổi provider hoặc thêm lần gọi sửa bài. Các thao tác HTTP Tinfos/Trello, cập nhật rồi publish, cardId lấy từ kết quả publish vẫn giữ như trước.
 

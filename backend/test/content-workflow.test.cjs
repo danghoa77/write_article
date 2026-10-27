@@ -553,7 +553,7 @@ test('Nest route executes inline login -> source -> create -> Gemini -> images -
   const {Test}=require('@nestjs/testing');
   const {CharacterRotationService}=require('../dist/modules/content/character-rotation.service.js');
   const fixture=await Test.createTestingModule({imports:[AppModule]}).overrideProvider(CharacterRotationService).useValue({
-    begin:async()=>({excluded:[]}), directive:()=>'', complete:async()=>({selected:[],excluded:[],cycle:1}), release:async()=>{},
+    begin:async()=>({excluded:[]}), writerTeam:team=>team, directive:()=>'', complete:async()=>({selected:[],excluded:[],cycle:1}), release:async()=>{},
   }).compile();
   const app=fixture.createNestApplication({logger:false});
   app.setGlobalPrefix('api');
