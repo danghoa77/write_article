@@ -78,6 +78,16 @@ export type WorkspaceOptions = {
   categories: Category[];
 };
 export type WorkspaceSettings = {
+  keyPools?: Record<
+    string,
+    {
+      id: string;
+      label: string;
+      active: boolean;
+      status: string;
+      updatedAt: string | null;
+    }[]
+  >;
   settings: WorkspaceOptions;
   revision: number;
   credentials: Record<string, { configured: boolean; saved: boolean }>;
@@ -85,6 +95,13 @@ export type WorkspaceSettings = {
     string,
     { configured: boolean; status: string; updatedAt: string | null }
   >;
+};
+export type ApiKeyAction = {
+  provider: "gemini" | "gpt" | "tavily" | "serper";
+  action: "add" | "rename" | "select" | "delete" | "reuse";
+  id?: string;
+  label?: string;
+  key?: string;
 };
 export type LibraryItem = {
   id: string;

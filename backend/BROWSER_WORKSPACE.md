@@ -16,6 +16,17 @@ Frontend React/Vite cùng origin với NestJS, gọi `/api`. Vite proxy local ch
 
 Browser session là ngữ cảnh riêng bằng AsyncLocalStorage: các request không ghi đè token của nhau. API `/auth/login`, `/auth/delete`, `/content/run` hiện có vẫn giữ tương thích và singleton cũ. Body/header gửi tới các endpoint đăng bài, publish, ảnh không đổi.
 
+## API key dự phòng
+
+- Cài đặt quản lý danh sách Gemini và OpenAI; Token tìm ảnh quản lý danh sách Tavily và Serper. Mỗi dịch vụ tối đa 30 key, có tên tài khoản, trạng thái và nhãn đang dùng.
+- `PATCH /api/workspace/api-keys`: `{revision, provider, action, id?, label?, key?}`. Provider: `gemini | gpt | tavily | serper`. Action: `add` (label/key), `rename` (id/label), `select` (id), `delete` (id), `reuse` (id, chỉ Gemini). Revision dùng chung document workspace và trả 409 khi xung đột.
+- `GET /api/workspace/settings` trả thêm `keyPools[provider]` với `id`, `label`, `active`, `status`, `updatedAt`. Không trả key, ciphertext hay fingerprint. AES-256-GCM bảo vệ key tại Firestore; dữ liệu nhập key chỉ nằm tạm trong form, xóa sau khi lưu.
+- Giữ tương thích key đã có: xuất hiện dưới tên Key hiện tại. Thêm dự phòng không thay key đang dùng; nếu chưa có key nào thì key đầu tiên trở thành active. Xóa key active tắt dịch vụ đến khi người dùng chọn key khác; không tự chọn dự phòng hoặc quay về env.
+- Người dùng tự chọn key rồi chạy lại. Không tự đổi key, không chuyển Gemini/GPT hoặc Tavily/Serper, không tự chạy lại toàn bộ workflow gây trùng bài đã publish. Thao tác đang chạy giữ key của request đó.
+- Lưu lỗi theo fingerprint của từng key, kể cả lỗi về sau khi đã đổi sang key khác. Chọn đi/chọn lại không xóa lỗi. Gemini có nút Dùng lại sau reset quota: chỉ xóa trạng thái ghi nhận tại web và chọn key, không reset quota tại Google, không đặt lịch tự reset hoặc khẳng định key đã hoạt động.
+- Tavily/Serper giữ trạng thái quota đỏ đến khi xóa key. Không có action reuse cho hai dịch vụ này; retry thành công không tự xóa nhãn quota đã ghi nhận. Rate limit vẫn được phân biệt với hết credit.
+- `settings/workspace` lưu `keyPools` mã hóa, `keyHealth` riêng từng fingerprint và `secrets` active để API cũ tiếp tục hoạt động. Các thay đổi key không sửa prompt, lineup, category hoặc nội dung mẫu.
+
 ## Cấu hình workspace
 
 Các API sau chỉ nhận signed browser cookie, không nhận UID từ client và không cần thêm lần đăng nhập Firebase ở FE:

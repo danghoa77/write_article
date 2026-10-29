@@ -1368,3 +1368,20 @@ td small {
 .effective-prompt textarea {
   margin-top: 14px;
 }
+
+.api-key-item {
+  padding: 14px;
+  border: 1px solid var(--dn-border);
+  border-radius: 10px;
+  background: var(--dn-bg);
+}
+.api-key-item > .row {
+  flex-wrap: wrap;
+}
+.api-key-item input {
+  min-width: 0;
+  flex: 1 1 180px;
+}
+.api-key-manager {
+  border-top: 1px solid var(--dn-border);
+}

@@ -6,11 +6,219 @@ import type {
   LibraryItem,
   WorkspaceOptions,
   WorkspaceSettings,
+  ApiKeyAction,
 } from "./types";
 export type SaveSettings = (
   settings: Partial<WorkspaceOptions>,
   secrets?: Record<string, string | null>,
 ) => Promise<void>;
+export type ManageApiKeys = (action: ApiKeyAction) => Promise<void>;
+
+function KeyPoolManager({
+  provider,
+  title,
+  data,
+  manage,
+}: {
+  provider: ApiKeyAction["provider"];
+  title: string;
+  data: WorkspaceSettings;
+  manage: ManageApiKeys;
+}) {
+  const [label, setLabel] = useState(""),
+    [key, setKey] = useState("");
+  const [names, setNames] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState(""),
+    [done, setDone] = useState("");
+  const [deleting, setDeleting] = useState<{
+    id: string;
+    label: string;
+  } | null>(null);
+  async function act(action: Omit<ApiKeyAction, "provider">) {
+    setBusy(true);
+    setError("");
+    setDone("");
+    try {
+      await manage({ ...action, provider });
+      if (action.action === "add") {
+        setKey("");
+        setLabel("");
+      }
+      setDeleting(null);
+      setDone(
+        action.action === "reuse"
+          ? "Đã chọn lại key. Trạng thái sẽ được kiểm tra ở lần gọi tiếp theo."
+          : "Đã lưu danh sách API key.",
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không lưu được API key");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="panel-body stack api-key-manager">
+      <p className="field-hint">
+        Lưu tối đa 30 key {title}, đặt tên theo tài khoản để dễ chọn. Bạn tự đổi
+        key và chạy lại; web không tự chuyển key hay nhà cung cấp.
+      </p>
+      {provider === "gemini" ? (
+        <p className="field-hint">
+          Khi quota của tài khoản đã được khôi phục, bấm “Dùng lại sau reset
+          quota”. Nút này không khôi phục hạn mức tại Google.
+        </p>
+      ) : ["tavily", "serper"].includes(provider) ? (
+        <p className="field-hint">
+          Key hết quota vẫn giữ nhãn đỏ khi đổi qua lại. Hãy chọn hoặc thêm key
+          khác; web không tự reset hạn mức.
+        </p>
+      ) : null}
+      {error && <Notice kind="danger">{error}</Notice>}
+      {done && <Notice kind="success">{done}</Notice>}
+      <div className="stack">
+        {(data.keyPools?.[provider] ?? []).map((item) => (
+          <div className="api-key-item stack" key={item.id}>
+            <div className="row">
+              <strong>{item.label}</strong>
+              <ProviderStatus
+                data={{
+                  configured: true,
+                  status: item.status,
+                  updatedAt: item.updatedAt,
+                }}
+              />
+              {item.active && <span className="save-note">Đang dùng</span>}
+            </div>
+            <div className="row">
+              <input
+                aria-label={`Tên key ${title} ${item.label}`}
+                value={names[item.id] ?? item.label}
+                maxLength={80}
+                disabled={busy}
+                onChange={(e) =>
+                  setNames({ ...names, [item.id]: e.target.value })
+                }
+              />
+              <button
+                disabled={
+                  busy ||
+                  !names[item.id]?.trim() ||
+                  names[item.id].trim() === item.label
+                }
+                onClick={() =>
+                  void act({
+                    action: "rename",
+                    id: item.id,
+                    label: names[item.id].trim(),
+                  })
+                }
+              >
+                Lưu tên
+              </button>
+            </div>
+            <div className="row">
+              <button
+                className={item.active ? "primary" : ""}
+                disabled={busy || item.active}
+                onClick={() => void act({ action: "select", id: item.id })}
+              >
+                Chọn key
+              </button>
+              {provider === "gemini" &&
+                ["quota", "rate_limit"].includes(item.status) && (
+                  <button
+                    disabled={busy}
+                    onClick={() => void act({ action: "reuse", id: item.id })}
+                  >
+                    Dùng lại sau reset quota
+                  </button>
+                )}
+              <button
+                className="danger"
+                disabled={busy}
+                onClick={() => setDeleting(item)}
+              >
+                Xóa key
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <form
+        className="stack"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void act({ action: "add", label: label.trim(), key: key.trim() });
+        }}
+      >
+        <label>
+          Tên key / tài khoản
+          <input
+            aria-label={`${title} tên key mới`}
+            value={label}
+            maxLength={80}
+            required
+            disabled={busy}
+            placeholder="Ví dụ: Tài khoản 1"
+            onChange={(e) => setLabel(e.target.value)}
+          />
+        </label>
+        <label>
+          API key mới
+          <input
+            type="password"
+            aria-label={`${title} key dự phòng mới`}
+            value={key}
+            autoComplete="off"
+            spellCheck={false}
+            required
+            disabled={busy}
+            onChange={(e) => setKey(e.target.value)}
+          />
+        </label>
+        <p className="field-hint">
+          Key được mã hóa trên server, không trả lại giá trị hoặc lưu trong
+          trình duyệt. Thêm dự phòng không đổi key đang dùng.
+        </p>
+        <button
+          className="primary"
+          disabled={
+            busy ||
+            !label.trim() ||
+            !key.trim() ||
+            (data.keyPools?.[provider]?.length ?? 0) >= 30
+          }
+        >
+          {busy ? "Đang lưu…" : "Thêm key dự phòng"}
+        </button>
+      </form>
+      {deleting && (
+        <Modal
+          title={`Xóa key ${deleting.label}`}
+          close={() => !busy && setDeleting(null)}
+        >
+          <p>
+            Xóa key đã lưu khỏi web. Nếu đây là key đang dùng, bạn cần chọn key
+            khác trước khi chạy tiếp.
+          </p>
+          <div className="row">
+            <button disabled={busy} onClick={() => setDeleting(null)}>
+              Hủy
+            </button>
+            <button
+              className="danger"
+              disabled={busy}
+              onClick={() => void act({ action: "delete", id: deleting.id })}
+            >
+              Xóa key
+            </button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
 
 export function ProviderStatus({
   data,
@@ -46,6 +254,7 @@ function ProviderCard({
   data,
   update,
   model,
+  manageKeys,
 }: {
   id: string;
   title: string;
@@ -53,6 +262,7 @@ function ProviderCard({
   data: WorkspaceSettings;
   update: SaveSettings;
   model?: "geminiModel" | "openaiModel";
+  manageKeys: ManageApiKeys;
 }) {
   const [values, setValues] = useState<Record<string, string>>({});
   const [cleared, setCleared] = useState<Record<string, boolean>>({});
@@ -92,78 +302,89 @@ function ProviderCard({
         <h2>{title}</h2>
         <ProviderStatus data={data.providers[id]} />
       </div>
-      <form className="panel-body stack" onSubmit={submit}>
-        {error && <Notice kind="danger">{error}</Notice>}
-        {done && <Notice kind="success">Đã lưu cấu hình {title}.</Notice>}
-        <fieldset className="stack" disabled={busy}>
-          {fields.map((field) => (
-            <div key={field.key}>
-              <label>
-                {field.label}
-                <input
-                  type="password"
-                  autoComplete="off"
-                  spellCheck={false}
-                  aria-label={`${title} ${field.label}`}
-                  placeholder={
-                    data.credentials[field.key]?.configured
-                      ? "•••••••• · Nhập key mới để thay"
-                      : "Nhập key hoặc token"
-                  }
-                  value={values[field.key] ?? ""}
-                  disabled={cleared[field.key]}
-                  onChange={(event) =>
-                    setValues({ ...values, [field.key]: event.target.value })
-                  }
-                />
-              </label>
-              {data.credentials[field.key]?.configured && (
-                <label className="check-label field-hint">
+      {(id === "trello" || model) && (
+        <form className="panel-body stack" onSubmit={submit}>
+          {error && <Notice kind="danger">{error}</Notice>}
+          {done && <Notice kind="success">Đã lưu cấu hình {title}.</Notice>}
+          <fieldset className="stack" disabled={busy}>
+            {(id === "trello" ? fields : []).map((field) => (
+              <div key={field.key}>
+                <label>
+                  {field.label}
                   <input
-                    type="checkbox"
-                    checked={!!cleared[field.key]}
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-label={`${title} ${field.label}`}
+                    placeholder={
+                      data.credentials[field.key]?.configured
+                        ? "•••••••• · Nhập key mới để thay"
+                        : "Nhập key hoặc token"
+                    }
+                    value={values[field.key] ?? ""}
+                    disabled={cleared[field.key]}
                     onChange={(event) =>
-                      setCleared({
-                        ...cleared,
-                        [field.key]: event.target.checked,
-                      })
+                      setValues({ ...values, [field.key]: event.target.value })
                     }
                   />
-                  Xóa {field.label.toLowerCase()} hiện tại khi lưu
                 </label>
-              )}
-            </div>
-          ))}
-          {model && (
-            <label>
-              Model
-              <input
-                aria-label={`${title} model`}
-                value={modelValue}
-                onChange={(event) => setModelValue(event.target.value)}
-                placeholder={
-                  id === "gpt"
-                    ? "Model GPT bạn có quyền sử dụng"
-                    : "Model Gemini"
-                }
-                required={id === "gemini"}
-              />
-            </label>
-          )}
-          <p className="field-hint">
-            Để trống key để giữ nguyên. Key được mã hóa trên server và không lưu
-            trong trình duyệt.
-          </p>
-          <button className="primary" type="submit">
-            {busy ? (
-              <span className="spinner" />
-            ) : (
-              <Icon name="lock" size={15} />
+                {data.credentials[field.key]?.configured && (
+                  <label className="check-label field-hint">
+                    <input
+                      type="checkbox"
+                      checked={!!cleared[field.key]}
+                      onChange={(event) =>
+                        setCleared({
+                          ...cleared,
+                          [field.key]: event.target.checked,
+                        })
+                      }
+                    />
+                    Xóa {field.label.toLowerCase()} hiện tại khi lưu
+                  </label>
+                )}
+              </div>
+            ))}
+            {model && (
+              <label>
+                Model
+                <input
+                  aria-label={`${title} model`}
+                  value={modelValue}
+                  onChange={(event) => setModelValue(event.target.value)}
+                  placeholder={
+                    id === "gpt"
+                      ? "Model GPT bạn có quyền sử dụng"
+                      : "Model Gemini"
+                  }
+                  required={id === "gemini"}
+                />
+              </label>
             )}
-            Lưu {title}
-          </button>
-        </fieldset>
-      </form>
+            <p className="field-hint">
+              {id === "trello"
+                ? "Để trống để giữ key/token hiện tại. Key được mã hóa trên server."
+                : "Đổi model không làm thay đổi API key đang chọn."}
+            </p>
+            <button className="primary" type="submit">
+              {busy ? (
+                <span className="spinner" />
+              ) : (
+                <Icon name="lock" size={15} />
+              )}
+              Lưu {title}
+            </button>
+          </fieldset>
+        </form>
+      )}
+      {id !== "trello" && (
+        <KeyPoolManager
+          provider={id as ApiKeyAction["provider"]}
+          title={title}
+          data={data}
+          manage={manageKeys}
+        />
+      )}
     </section>
   );
 }
@@ -171,10 +392,12 @@ export function CredentialsPage({
   data,
   update,
   imagesOnly = false,
+  manageKeys,
 }: {
   data: WorkspaceSettings;
   update: SaveSettings;
   imagesOnly?: boolean;
+  manageKeys: ManageApiKeys;
 }) {
   return (
     <>
@@ -192,6 +415,7 @@ export function CredentialsPage({
               fields={[{ key: "TAVILY_API_KEY", label: "API key" }]}
               data={data}
               update={update}
+              manageKeys={manageKeys}
             />
             <ProviderCard
               id="serper"
@@ -199,6 +423,7 @@ export function CredentialsPage({
               fields={[{ key: "SERPER_API_KEY", label: "API key" }]}
               data={data}
               update={update}
+              manageKeys={manageKeys}
             />
           </>
         ) : (
@@ -210,6 +435,7 @@ export function CredentialsPage({
               model="geminiModel"
               data={data}
               update={update}
+              manageKeys={manageKeys}
             />
             <ProviderCard
               id="gpt"
@@ -218,6 +444,7 @@ export function CredentialsPage({
               model="openaiModel"
               data={data}
               update={update}
+              manageKeys={manageKeys}
             />
             <ProviderCard
               id="trello"
@@ -228,6 +455,7 @@ export function CredentialsPage({
               ]}
               data={data}
               update={update}
+              manageKeys={manageKeys}
             />
           </>
         )}

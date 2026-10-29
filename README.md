@@ -16,4 +16,4 @@ Dự án được **vibe-code dựa trên workflow n8n đã hoạt động ổn 
 
 Đăng nhập, nhập caption/content hoặc lấy từ Trello, chọn các đội và category rồi viết thử hoặc viết & publish. Prompt giữ các rule từ workflow n8n; lịch sử giúp tránh lặp cầu thủ khi viết lại cùng nguồn cho cùng đội.
 
-Các cấu hình và API key được quản lý trong phần cài đặt. Không đưa file `.env` hoặc Firebase service-account key lên GitHub.
+Các cấu hình và danh sách API key dự phòng được quản lý trên web. Bạn tự chọn key khi cần đổi; Gemini có thể dùng lại key sau khi quota được khôi phục. Không đưa file `.env` hoặc Firebase service-account key lên GitHub.

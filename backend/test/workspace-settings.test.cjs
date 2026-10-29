@@ -11,8 +11,21 @@ const {
 } = require('../dist/modules/content/content-http.service.js');
 const originalFetch = global.fetch;
 const originalKey = process.env.WORKSPACE_ENCRYPTION_KEY;
+const providerEnvNames = [
+  'GEMINI_API_KEY',
+  'OPENAI_API_KEY',
+  'TAVILY_API_KEY',
+  'SERPER_API_KEY',
+];
+const originalProviderEnv = Object.fromEntries(
+  providerEnvNames.map((name) => [name, process.env[name]]),
+);
 afterEach(() => {
   global.fetch = originalFetch;
+  for (const name of providerEnvNames) {
+    if (originalProviderEnv[name] === undefined) delete process.env[name];
+    else process.env[name] = originalProviderEnv[name];
+  }
   if (originalKey === undefined) delete process.env.WORKSPACE_ENCRYPTION_KEY;
   else process.env.WORKSPACE_ENCRYPTION_KEY = originalKey;
 });
@@ -38,6 +51,7 @@ function fakeFirebase() {
 }
 function fixture() {
   process.env.WORKSPACE_ENCRYPTION_KEY = 'test-only-unique-encryption-key';
+  for (const name of providerEnvNames) process.env[name] = '';
   const firebase = fakeFirebase(),
     config = new ContentConfigService();
   return {
@@ -390,6 +404,16 @@ test('workspace routes enforce session ownership and keep the original source Tr
   try {
     const http = request(app.getHttpServer());
     await http.get('/api/workspace/settings').expect(401);
+    await http
+      .patch('/api/workspace/api-keys')
+      .send({
+        revision: 0,
+        provider: 'gemini',
+        action: 'add',
+        label: 'Unauthorized',
+        key: 'not-saved',
+      })
+      .expect(401);
     await http.get('/api/workspace/library').expect(401);
     await http.post('/api/workspace/analyze').send({}).expect(404);
     await http.post('/api/workspace/preview').send({}).expect(401);
@@ -433,7 +457,11 @@ test('workspace routes enforce session ownership and keep the original source Tr
       .set('Cookie', cookie)
       .expect(200);
     a.equal(source.body.content, 'Original content');
-    await http.post('/api/workspace/analyze').set('Cookie', cookie).send({}).expect(404);
+    await http
+      .post('/api/workspace/analyze')
+      .set('Cookie', cookie)
+      .send({})
+      .expect(404);
     await http
       .post('/api/workspace/preview')
       .set('Cookie', cookie)
@@ -506,6 +534,32 @@ test('workspace routes enforce session ownership and keep the original source Tr
         ],
       })
       .expect(200);
+    const poolAdded = await http
+      .patch('/api/workspace/api-keys')
+      .set('Cookie', cookie)
+      .send({
+        revision: 1,
+        provider: 'gemini',
+        action: 'add',
+        label: 'Backup account',
+        key: 'route-private-backup',
+      })
+      .expect(200);
+    a.equal(poolAdded.body.keyPools.gemini.length, 2);
+    a.equal(
+      JSON.stringify(poolAdded.body).includes('route-private-backup'),
+      false,
+    );
+    await http
+      .patch('/api/workspace/api-keys')
+      .set('Cookie', cookie)
+      .send({
+        revision: 1,
+        provider: 'gemini',
+        action: 'delete',
+        id: poolAdded.body.keyPools.gemini[1].id,
+      })
+      .expect(409);
     a.ok(
       [...firebase.data.keys()].every((path) =>
         path.startsWith('users/tinfos%3Aowner/'),
@@ -516,4 +570,372 @@ test('workspace routes enforce session ownership and keep the original source Tr
     if (originalSecret === undefined) delete process.env.BROWSER_SESSION_SECRET;
     else process.env.BROWSER_SESSION_SECRET = originalSecret;
   }
+});
+
+test('eight Gemini account keys are encrypted, labelled, manually selected and isolated', async () => {
+  const { service, firebase, config } = fixture();
+  let revision = 0;
+  for (let i = 1; i <= 8; i++) {
+    const r = await service.manageKeys('pool-user', {
+      revision: revision++,
+      provider: 'gemini',
+      action: 'add',
+      label: 'Account ' + i,
+      key: 'gemini-private-' + i,
+    });
+    a.equal(r.keyPools.gemini.length, i);
+  }
+  const saved = await service.get('pool-user');
+  a.equal(saved.keyPools.gemini.filter((k) => k.active).length, 1);
+  a.equal(
+    await service.execute('pool-user', async () =>
+      config.key('GEMINI_API_KEY'),
+    ),
+    'gemini-private-1',
+  );
+  a.equal(JSON.stringify(saved).includes('gemini-private-'), false);
+  a.equal(
+    JSON.stringify([...firebase.data.values()]).includes('gemini-private-'),
+    false,
+  );
+  const last = saved.keyPools.gemini[7];
+  await service.manageKeys('pool-user', {
+    revision: revision++,
+    provider: 'gemini',
+    action: 'select',
+    id: last.id,
+  });
+  a.equal(
+    await service.execute('pool-user', async () =>
+      config.key('GEMINI_API_KEY'),
+    ),
+    'gemini-private-8',
+  );
+  a.equal((await service.get('other-account')).keyPools.gemini.length, 0);
+});
+
+test('legacy active key migrates without loss, adding backup does not switch it', async () => {
+  const { service, config } = fixture();
+  await service.update('legacy', {
+    revision: 0,
+    secrets: { GEMINI_API_KEY: 'original-key' },
+  });
+  const result = await service.manageKeys('legacy', {
+    revision: 1,
+    provider: 'gemini',
+    action: 'add',
+    label: 'Backup',
+    key: 'backup-key',
+  });
+  a.equal(result.keyPools.gemini.length, 2);
+  a.equal(
+    await service.execute('legacy', async () => config.key('GEMINI_API_KEY')),
+    'original-key',
+  );
+});
+
+test('Gemini quota state follows key when selecting away and back; reuse is explicit', async () => {
+  const { service, config } = fixture();
+  let revision = 0;
+  await service.manageKeys('a', {
+    revision: revision++,
+    provider: 'gemini',
+    action: 'add',
+    label: 'A',
+    key: 'key-a',
+  });
+  await service.manageKeys('a', {
+    revision: revision++,
+    provider: 'gemini',
+    action: 'add',
+    label: 'B',
+    key: 'key-b',
+  });
+  let saved = await service.get('a');
+  const [first, second] = saved.keyPools.gemini;
+  await service.execute('a', async () => config.observe('gemini', 'quota'));
+  await service.manageKeys('a', {
+    revision: revision++,
+    provider: 'gemini',
+    action: 'select',
+    id: second.id,
+  });
+  a.equal((await service.get('a')).providers.gemini.status, 'unverified');
+  await service.manageKeys('a', {
+    revision: revision++,
+    provider: 'gemini',
+    action: 'select',
+    id: first.id,
+  });
+  a.equal((await service.get('a')).providers.gemini.status, 'quota');
+  await service.manageKeys('a', {
+    revision: revision++,
+    provider: 'gemini',
+    action: 'reuse',
+    id: first.id,
+  });
+  a.equal((await service.get('a')).providers.gemini.status, 'unverified');
+  await service.execute('a', async () => config.observe('gemini', 'ready'));
+  a.equal((await service.get('a')).providers.gemini.status, 'ready');
+});
+
+test('Tavily and Serper exhausted keys stay red through selection and have no reuse reset', async () => {
+  const { service, config } = fixture();
+  for (const provider of ['tavily', 'serper']) {
+    const uid = provider;
+    await service.manageKeys(uid, {
+      revision: 0,
+      provider,
+      action: 'add',
+      label: 'A',
+      key: provider + '-a',
+    });
+    let saved = await service.manageKeys(uid, {
+      revision: 1,
+      provider,
+      action: 'add',
+      label: 'B',
+      key: provider + '-b',
+    });
+    const [first, second] = saved.keyPools[provider];
+    await service.execute(uid, async () => config.observe(provider, 'quota'));
+    await service.manageKeys(uid, {
+      revision: 2,
+      provider,
+      action: 'select',
+      id: second.id,
+    });
+    saved = await service.manageKeys(uid, {
+      revision: 3,
+      provider,
+      action: 'select',
+      id: first.id,
+    });
+    a.equal(saved.providers[provider].status, 'quota');
+    await service.execute(uid, async () => config.observe(provider, 'ready'));
+    a.equal((await service.get(uid)).providers[provider].status, 'quota');
+    await a.rejects(
+      () =>
+        service.manageKeys(uid, {
+          revision: 4,
+          provider,
+          action: 'reuse',
+          id: first.id,
+        }),
+      (e) => e.getStatus() === 400,
+    );
+  }
+});
+
+test('late error on an inactive key updates only its row, not the selected replacement', async () => {
+  const { service, config } = fixture();
+  await service.manageKeys('a', {
+    revision: 0,
+    provider: 'gemini',
+    action: 'add',
+    label: 'A',
+    key: 'old',
+  });
+  const saved = await service.manageKeys('a', {
+    revision: 1,
+    provider: 'gemini',
+    action: 'add',
+    label: 'B',
+    key: 'new',
+  });
+  await service.execute('a', async () => {
+    await service.manageKeys('a', {
+      revision: 2,
+      provider: 'gemini',
+      action: 'select',
+      id: saved.keyPools.gemini[1].id,
+    });
+    config.observe('gemini', 'quota');
+  });
+  const after = await service.get('a');
+  a.equal(after.providers.gemini.status, 'unverified');
+  a.equal(after.keyPools.gemini[0].status, 'quota');
+});
+
+test('deleting an active key disables it without silently switching or inheriting env key', async () => {
+  const { service, config } = fixture();
+  let saved = await service.manageKeys('a', {
+    revision: 0,
+    provider: 'gemini',
+    action: 'add',
+    label: 'A',
+    key: 'first',
+  });
+  saved = await service.manageKeys('a', {
+    revision: 1,
+    provider: 'gemini',
+    action: 'add',
+    label: 'B',
+    key: 'second',
+  });
+  const active = saved.keyPools.gemini.find((k) => k.active),
+    other = saved.keyPools.gemini.find((k) => !k.active);
+  saved = await service.manageKeys('a', {
+    revision: 2,
+    provider: 'gemini',
+    action: 'delete',
+    id: active.id,
+  });
+  a.equal(saved.credentials.GEMINI_API_KEY.configured, false);
+  a.equal(saved.keyPools.gemini.length, 1);
+  a.equal(saved.keyPools.gemini[0].active, false);
+  await a.rejects(
+    () => service.execute('a', async () => config.key('GEMINI_API_KEY')),
+    (e) => e.getStatus() === 503,
+  );
+  await service.manageKeys('a', {
+    revision: 3,
+    provider: 'gemini',
+    action: 'select',
+    id: other.id,
+  });
+  a.equal(
+    await service.execute('a', async () => config.key('GEMINI_API_KEY')),
+    'second',
+  );
+});
+
+test('duplicate secret, invalid operations, other-user IDs and stale revisions are rejected', async () => {
+  const { service } = fixture();
+  const saved = await service.manageKeys('a', {
+    revision: 0,
+    provider: 'gemini',
+    action: 'add',
+    label: 'A',
+    key: 'same-secret',
+  });
+  await a.rejects(
+    () =>
+      service.manageKeys('a', {
+        revision: 1,
+        provider: 'gemini',
+        action: 'add',
+        label: 'Duplicate',
+        key: 'same-secret',
+      }),
+    (e) => e.getStatus() === 400,
+  );
+  await a.rejects(
+    () =>
+      service.manageKeys('b', {
+        revision: 0,
+        provider: 'gemini',
+        action: 'select',
+        id: saved.keyPools.gemini[0].id,
+      }),
+    (e) => e.getStatus() === 400,
+  );
+  await a.rejects(
+    () =>
+      service.manageKeys('a', {
+        revision: 0,
+        provider: 'gemini',
+        action: 'select',
+        id: saved.keyPools.gemini[0].id,
+      }),
+    (e) => e.getStatus() === 409,
+  );
+  for (const body of [
+    { provider: 'trello', action: 'add', label: 'No', key: 'secret' },
+    { provider: 'gemini', action: 'add', label: '', key: 'x' },
+    {
+      provider: 'gemini',
+      action: 'select',
+      id: saved.keyPools.gemini[0].id,
+      key: 'injected',
+    },
+  ])
+    await a.rejects(
+      () => service.manageKeys('a', { revision: 1, ...body }),
+      (e) => e.getStatus() === 400,
+    );
+  const renamed = await service.manageKeys('a', {
+    revision: 1,
+    provider: 'gemini',
+    action: 'rename',
+    id: saved.keyPools.gemini[0].id,
+    label: 'My account',
+  });
+  a.equal(renamed.keyPools.gemini[0].label, 'My account');
+});
+
+test('legacy replacement API also retains key history and reselecting exhausted keys stays red', async () => {
+  const { service, config } = fixture();
+  await service.update('a', {
+    revision: 0,
+    secrets: { TAVILY_API_KEY: 'first' },
+  });
+  await service.execute('a', async () => config.observe('tavily', 'quota'));
+  await service.update('a', {
+    revision: 1,
+    secrets: { TAVILY_API_KEY: 'second' },
+  });
+  const saved = await service.update('a', {
+    revision: 2,
+    secrets: { TAVILY_API_KEY: 'first' },
+  });
+  a.equal(saved.providers.tavily.status, 'quota');
+  a.equal(saved.keyPools.tavily.length, 2);
+});
+
+test('legacy document migration keeps configured key and original quota status', async () => {
+  const { service, firebase, config } = fixture();
+  await service.update('a', {
+    revision: 0,
+    secrets: { GEMINI_API_KEY: 'legacy-only' },
+  });
+  await service.execute('a', async () => config.observe('gemini', 'quota'));
+  const path = 'users/a/settings/workspace',
+    doc = firebase.data.get(path);
+  delete doc.keyPools;
+  delete doc.keyHealth;
+  firebase.data.set(path, doc);
+  const before = await service.get('a');
+  a.equal(before.keyPools.gemini[0].status, 'quota');
+  a.equal(before.keyPools.gemini[0].active, true);
+  const after = await service.manageKeys('a', {
+    revision: 1,
+    provider: 'gemini',
+    action: 'add',
+    label: 'New account',
+    key: 'new-backup',
+  });
+  a.equal(after.keyPools.gemini.length, 2);
+  a.equal(after.providers.gemini.status, 'quota');
+  a.equal(
+    await service.execute('a', async () => config.key('GEMINI_API_KEY')),
+    'legacy-only',
+  );
+});
+
+test('pool limit is 30 keys and rejecting the 31st leaves revision and active key intact', async () => {
+  const { service } = fixture();
+  for (let i = 0; i < 30; i++)
+    await service.manageKeys('limit', {
+      revision: i,
+      provider: 'gemini',
+      action: 'add',
+      label: 'Account ' + i,
+      key: 'unique-key-' + i,
+    });
+  await a.rejects(
+    () =>
+      service.manageKeys('limit', {
+        revision: 30,
+        provider: 'gemini',
+        action: 'add',
+        label: 'Too many',
+        key: 'last-key',
+      }),
+    (e) => e.getStatus() === 400,
+  );
+  const saved = await service.get('limit');
+  a.equal(saved.revision, 30);
+  a.equal(saved.keyPools.gemini.length, 30);
+  a.equal(saved.keyPools.gemini.filter((k) => k.active).length, 1);
 });

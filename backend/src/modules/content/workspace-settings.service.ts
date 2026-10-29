@@ -10,6 +10,7 @@ import {
   createDecipheriv,
   createHash,
   randomBytes,
+  randomUUID,
 } from 'node:crypto';
 import { FirebaseService } from '../firebase/firebase.service.js';
 import { ContentConfigService } from './content-config.service.js';
@@ -28,6 +29,27 @@ export const PROVIDER_KEYS: Record<string, string[]> = {
   tavily: ['TAVILY_API_KEY'],
   serper: ['SERPER_API_KEY'],
   trello: ['TRELLO_API_KEY', 'TRELLO_API_TOKEN'],
+};
+export const KEY_POOL_PROVIDERS = [
+  'gemini',
+  'gpt',
+  'tavily',
+  'serper',
+] as const;
+export type KeyPoolProvider = (typeof KEY_POOL_PROVIDERS)[number];
+export type KeyPoolAction = {
+  revision: number;
+  provider: KeyPoolProvider;
+  action: 'add' | 'rename' | 'select' | 'delete' | 'reuse';
+  id?: string;
+  label?: string;
+  key?: string;
+};
+type StoredKey = {
+  id: string;
+  label: string;
+  encrypted: string;
+  fingerprint: string;
 };
 export type WorkspaceOptions = {
   slugSuffix: string;
@@ -156,6 +178,29 @@ export class WorkspaceSettingsService {
       updatedAt: saved.updatedAt ?? null,
       credentials,
       providers,
+      keyPools: Object.fromEntries(
+        KEY_POOL_PROVIDERS.map((provider) => {
+          const pool = this.pool(saved, provider);
+          const active = this.config.fingerprint(provider, values);
+          return [
+            provider,
+            pool.map((item) => {
+              const health =
+                saved.keyHealth?.[provider]?.[item.fingerprint] ??
+                (saved.health?.[provider]?.fingerprint === item.fingerprint
+                  ? saved.health[provider]
+                  : null);
+              return {
+                id: item.id,
+                label: item.label,
+                active: item.fingerprint === active,
+                status: health?.status ?? 'unverified',
+                updatedAt: health?.updatedAt ?? null,
+              };
+            }),
+          ];
+        }),
+      ),
     };
   }
   private options(saved: any): WorkspaceOptions {
@@ -174,6 +219,133 @@ export class WorkspaceSettingsService {
   }
   async get(uid: string) {
     return this.response(await this.read(uid));
+  }
+  private pool(saved: any, provider: KeyPoolProvider): StoredKey[] {
+    const pool: StoredKey[] = [...(saved.keyPools?.[provider] ?? [])];
+    const field = PROVIDER_KEYS[provider][0];
+    const value =
+      field in (saved.secrets ?? {})
+        ? this.decrypt(saved.secrets[field])
+        : (process.env[field] ?? '');
+    if (value.trim()) {
+      const fingerprint = this.config.fingerprint(provider, { [field]: value });
+      if (!pool.some((item) => item.fingerprint === fingerprint))
+        pool.unshift({
+          id: 'current',
+          label: 'Key hiện tại',
+          encrypted: saved.secrets?.[field] ?? this.encrypt(value),
+          fingerprint,
+        });
+    }
+    return pool;
+  }
+
+  async manageKeys(uid: string, body: KeyPoolAction) {
+    if (
+      !body ||
+      !Number.isSafeInteger(body.revision) ||
+      body.revision < 0 ||
+      !KEY_POOL_PROVIDERS.includes(body.provider) ||
+      !['add', 'rename', 'select', 'delete', 'reuse'].includes(body.action) ||
+      Object.keys(body).some(
+        (key) =>
+          !['revision', 'provider', 'action', 'id', 'label', 'key'].includes(
+            key,
+          ),
+      ) ||
+      (body.action !== 'add' && (typeof body.id !== 'string' || !body.id)) ||
+      (['add', 'rename'].includes(body.action) &&
+        (typeof body.label !== 'string' ||
+          !body.label.trim() ||
+          body.label.length > 80)) ||
+      (body.action === 'add' &&
+        (typeof body.key !== 'string' ||
+          !body.key.trim() ||
+          body.key.length > 8192)) ||
+      (body.action !== 'add' && body.key !== undefined) ||
+      (body.action === 'reuse' && body.provider !== 'gemini')
+    )
+      throw new BadRequestException(
+        'Invalid API key action; reuse is available for Gemini only',
+      );
+    try {
+      const reference = this.reference(uid);
+      return await this.firebase.database().runTransaction(async (tx) => {
+        const saved = (await tx.get(reference)).data() ?? {};
+        if ((saved.revision ?? 0) !== body.revision)
+          throw new ConflictException(
+            'Cấu hình đã thay đổi. Tải lại trước khi lưu.',
+          );
+        const provider = body.provider,
+          field = PROVIDER_KEYS[provider][0];
+        let pool = this.pool(saved, provider);
+        const keyHealth = structuredClone(saved.keyHealth ?? {});
+        keyHealth[provider] ??= {};
+        if (saved.health?.[provider])
+          keyHealth[provider][saved.health[provider].fingerprint] =
+            saved.health[provider];
+        const secrets = { ...(saved.secrets ?? {}) },
+          health = { ...(saved.health ?? {}) };
+        const current = this.config.fingerprint(provider, this.values(saved));
+        const item = pool.find((entry) => entry.id === body.id);
+        if (body.action !== 'add' && !item)
+          throw new BadRequestException('API key no longer exists');
+        if (body.action === 'add') {
+          if (pool.length >= 30)
+            throw new BadRequestException('Maximum 30 saved keys per provider');
+          const value = body.key!.trim(),
+            fingerprint = this.config.fingerprint(provider, { [field]: value });
+          if (pool.some((entry) => entry.fingerprint === fingerprint))
+            throw new BadRequestException(
+              'Key này đã có trong danh sách; hãy chọn lại key đã lưu.',
+            );
+          const added = {
+            id: randomUUID(),
+            label: body.label!.trim(),
+            encrypted: this.encrypt(value),
+            fingerprint,
+          };
+          pool.push(added);
+          // Adding a backup does not change a configured active key.
+          const activeValue =
+            field in secrets
+              ? this.decrypt(secrets[field])
+              : process.env[field];
+          if (!activeValue?.trim()) {
+            secrets[field] = added.encrypted;
+            delete health[provider];
+          }
+        } else if (body.action === 'rename') item!.label = body.label!.trim();
+        else if (body.action === 'delete') {
+          pool = pool.filter((entry) => entry.id !== body.id);
+          delete keyHealth[provider][item!.fingerprint];
+          if (item!.fingerprint === current) {
+            secrets[field] = this.encrypt('');
+            delete health[provider];
+          }
+        } else {
+          secrets[field] = item!.encrypted;
+          if (body.action === 'reuse')
+            delete keyHealth[provider][item!.fingerprint];
+          const status = keyHealth[provider][item!.fingerprint];
+          if (status) health[provider] = status;
+          else delete health[provider];
+        }
+        const next = {
+          ...saved,
+          secrets,
+          health,
+          keyHealth,
+          keyPools: { ...saved.keyPools, [provider]: pool },
+          revision: body.revision + 1,
+          updatedAt: new Date().toISOString(),
+        };
+        tx.set(reference, next);
+        return this.response(next);
+      });
+    } catch (error) {
+      this.storageError(error);
+    }
   }
   private validate(settings: WorkspaceOptions) {
     const known = Object.keys(this.defaults());
@@ -276,11 +448,43 @@ export class WorkspaceSettingsService {
             this.config.fingerprint(provider, nextValues)
           )
             delete health[provider];
+        const keyPools = { ...saved.keyPools },
+          keyHealth = structuredClone(saved.keyHealth ?? {});
+        for (const provider of KEY_POOL_PROVIDERS) {
+          const field = PROVIDER_KEYS[provider][0];
+          if (!body.secrets || !(field in body.secrets)) continue;
+          const pool = this.pool(saved, provider);
+          keyHealth[provider] ??= {};
+          if (saved.health?.[provider])
+            keyHealth[provider][saved.health[provider].fingerprint] =
+              saved.health[provider];
+          const value = nextValues[field];
+          const fingerprint = this.config.fingerprint(provider, {
+            [field]: value,
+          });
+          if (value && !pool.some((item) => item.fingerprint === fingerprint)) {
+            if (pool.length >= 30)
+              throw new BadRequestException(
+                'Maximum 30 saved keys per provider',
+              );
+            pool.push({
+              id: randomUUID(),
+              label: 'Key mới',
+              encrypted: secrets[field],
+              fingerprint,
+            });
+          }
+          keyPools[provider] = pool;
+          if (value && keyHealth[provider][fingerprint])
+            health[provider] = keyHealth[provider][fingerprint];
+        }
         const next = {
           ...saved,
           settings,
           secrets,
           health,
+          keyPools,
+          keyHealth,
           revision: body.revision + 1,
           updatedAt: new Date().toISOString(),
         };
@@ -315,17 +519,40 @@ export class WorkspaceSettingsService {
               const current = (await tx.get(ref)).data() ?? {},
                 currentValues = this.values(current);
               const health = { ...(current.health ?? {}) };
+              const keyHealth = structuredClone(current.keyHealth ?? {});
               for (const [provider, observation] of Object.entries(
                 observations,
               )) {
+                let effective = observation;
+                const previous =
+                  keyHealth[provider]?.[observation.fingerprint] ??
+                  (current.health?.[provider]?.fingerprint ===
+                  observation.fingerprint
+                    ? current.health[provider]
+                    : null);
+                if (
+                  ['tavily', 'serper'].includes(provider) &&
+                  previous?.status === 'quota' &&
+                  observation.status === 'ready'
+                )
+                  effective = previous;
+                if (
+                  KEY_POOL_PROVIDERS.includes(provider as KeyPoolProvider) &&
+                  this.pool(current, provider as KeyPoolProvider).some(
+                    (item) => item.fingerprint === observation.fingerprint,
+                  )
+                ) {
+                  keyHealth[provider] ??= {};
+                  keyHealth[provider][observation.fingerprint] = effective;
+                }
                 // A result for an old key must not turn a newly replaced key red.
                 if (
                   this.config.fingerprint(provider, currentValues) ===
                   observation.fingerprint
                 )
-                  health[provider] = observation;
+                  health[provider] = effective;
               }
-              tx.set(ref, { ...current, health });
+              tx.set(ref, { ...current, health, keyHealth });
             });
           } catch {
             console.warn(

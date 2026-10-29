@@ -25,6 +25,7 @@ import {
   WorkspaceSettingsService,
   type WorkspaceOptions,
   type LibraryItem,
+  type KeyPoolAction,
 } from './workspace-settings.service.js';
 import { ContentConfigService } from './content-config.service.js';
 import { TrelloService } from './trello.service.js';
@@ -71,6 +72,13 @@ export class WorkspaceController {
         pipelinePrompts: { rewrite: this.config.defaults().prompt },
         credentials: this.config.credentialStatus(),
       }),
+    );
+  }
+  @Patch('api-keys')
+  manageKeys(@Req() req: WorkspaceRequest, @Body() body: KeyPoolAction) {
+    return this.settings.manageKeys(
+      this.sessions.uid(req.browserSession),
+      body,
     );
   }
   @Get('source')

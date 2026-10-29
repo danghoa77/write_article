@@ -15,6 +15,7 @@ import type {
   Library,
   LibraryItem,
   PromptDocument,
+  ApiKeyAction,
 } from "./types";
 import { api, ApiError, errorText, hasExpired, load, save } from "./lib";
 import {
@@ -825,6 +826,39 @@ export default function Workspace({
       setToast({ kind: "success", text: "Đã lưu cấu hình lên Firestore." });
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) expire();
+      throw error;
+    }
+  }
+  async function manageApiKeys(action: ApiKeyAction) {
+    if (!settingsData) throw Error("Chưa tải được cấu hình");
+    try {
+      const value = await api<WorkspaceSettings>(
+        "workspace/api-keys",
+        { ...action, revision: settingsData.revision },
+        "PATCH",
+      );
+      setSettingsData(value);
+      setConfig((current) =>
+        current
+          ? {
+              ...current,
+              credentials: Object.fromEntries(
+                Object.entries(value.credentials).map(([name, info]) => [
+                  name,
+                  info.configured,
+                ]),
+              ),
+            }
+          : current,
+      );
+      setToast({
+        kind: "success",
+        text: "Đã cập nhật API key. Lượt chạy tiếp theo dùng key bạn chọn.",
+      });
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) expire();
+      if (error instanceof ApiError && error.status === 409)
+        await refreshHealth();
       throw error;
     }
   }
@@ -1801,6 +1835,7 @@ export default function Workspace({
                   data={settingsData}
                   update={updateSettings}
                   imagesOnly
+                  manageKeys={manageApiKeys}
                 />
               )}
               {page === "settings" && (
@@ -1811,6 +1846,7 @@ export default function Workspace({
                     update={updateSettings}
                   />
                   <CredentialsPage
+                    manageKeys={manageApiKeys}
                     data={settingsData}
                     update={updateSettings}
                   />
