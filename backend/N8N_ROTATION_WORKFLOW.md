@@ -41,3 +41,9 @@ FE chỉ còn editor `rewrite`; kết quả hiển thị các tên nhận diện
 - Backend/frontend build, frontend lint đạt.
 - Test thực Gemini cùng nguồn / Adelaide Crows: lượt 1 Izak Rankine, lượt 2 Josh Rachele; 2 lượt viết, 2 lần gọi model, 0 publish. Chi tiết: `test-results/rotation-live.json`.
 - Khi deploy bản v5, lần đọc prompt đầu tiên sẽ chuyển cấu hình sang phiên bản mới và lưu bản sao cấu hình cũ. Lịch sử của hai bản test thật đã lưu Firebase.
+
+## Caption nhiều dòng (bản sửa 2026-10-29)
+
+Bộ tách `format-content.ts` đọc toàn bộ vùng từ `Caption:` đến nhãn `Content:` ở đầu dòng, thay cho regex cũ chỉ lấy dòng đầu. Giữ xuống dòng, đoạn diễn giải, tên nhân vật và CTA; từ `Content:` nằm giữa câu không bị hiểu thành nhãn. Nếu model không ghi nhãn Content, dùng thẻ HTML block đầu tiên làm ranh giới. Giữ nguyên toàn bộ HTML sau ranh giới, không viết lại nội dung. Caption thiếu/rỗng hoặc body thiếu vẫn bị chặn theo quy trình hiện tại.
+
+Đây là bản sửa parser so với bản port format5 trước đó, không sửa các rule prompt n8n hay body/header API. Đồng thời cơ chế chống lặp đã đọc được tên cầu thủ ở các dòng sau của caption. Kiểm tra hồi quy gồm mẫu SHOCKWAVE, LF/CRLF, CTA, HTML nhiều đoạn, nhãn lẫn trong câu, caption rỗng, truyền caption đầy đủ vào Trello và nhận diện tên ở đoạn sau.

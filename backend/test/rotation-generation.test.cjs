@@ -85,6 +85,24 @@ test('first write is precisely the rendered n8n prompt, one AI call, full roster
   );
   a.deepEqual(r.results[0].rotation.selected, ['Player Alpha']);
 });
+
+test('multiline caption keeps narrative and CTA; rotation detects player in later paragraph', async () => {
+  const caption =
+    'FICTION: 👀 A MASSIVE SHOCKWAVE THROUGH THE AFL:\n\nPlayer Alpha has stunned everyone with a dramatic career move. 🏉\n\nWATCH NOW:';
+  const body =
+    '<h2>The move</h2>\n<p>Player Alpha makes a dramatic career move.</p>\n<!--IMAGE: Example Club AFL-->';
+  const f = setup(
+    () => `Title: The move\nCaption: ${caption}\nContent:\n${body}`,
+  );
+  const result = await f.generation.batch(source);
+  a.equal(result.success, true);
+  a.equal(result.results[0].article.caption, caption);
+  a.equal(result.results[0].article.content, body);
+  a.deepEqual(result.results[0].rotation.selected, ['Player Alpha']);
+  const repeated = await f.generation.batch(source);
+  a.equal(repeated.success, false);
+  a.equal(repeated.results[0].error.code, 'CHARACTER_REPEATED');
+});
 test('same source and team exclude prior caption player, not names appearing only in body', async () => {
   const f = setup((prompt) =>
     article(
