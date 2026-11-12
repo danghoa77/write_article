@@ -527,7 +527,7 @@ export default function Workspace({
     persist("source", next);
   }
   async function getSource() {
-    if (!prefs) return;
+    if (!prefs || !hasTrelloCredentials) return;
     setSourceLoading(true);
     setToast(null);
     try {
@@ -548,25 +548,31 @@ export default function Workspace({
       void refreshHealth();
     }
   }
-  const selected = teams
-    .filter((team) => prefs?.selected.includes(teamKey(team)))
-    .map((team) => ({
-      ...team,
-      categories: (prefs?.categories[teamKey(team)] ?? team.categories).filter(
-        (id) =>
-          settingsData?.settings.categories.some((item) => item.id === id),
-      ),
-    }));
   const options =
     settingsData?.settings.categories
       .map((item) => item.id)
       .sort((a, b) => a - b) ?? [];
+  function categoriesFor(team: Team) {
+    const defaults = team.categories.filter((id) => options.includes(id));
+    const override = prefs?.categories[teamKey(team)];
+    if (
+      override?.lineup?.length !== team.categories.length ||
+      !override.lineup.every((id, index) => id === team.categories[index])
+    )
+      return defaults;
+    const available = override.selected.filter((id) => options.includes(id));
+    return override.selected.length && !available.length ? defaults : available;
+  }
+  const selected = teams
+    .filter((team) => prefs?.selected.includes(teamKey(team)))
+    .map((team) => ({ ...team, categories: categoriesFor(team) }));
+  const hasTrelloCredentials = Boolean(
+    config?.credentials.TRELLO_API_KEY && config.credentials.TRELLO_API_TOKEN,
+  );
   const requiredKeys = prefs
     ? [
         prefs.textProvider === "gemini" ? "GEMINI_API_KEY" : "OPENAI_API_KEY",
         prefs.imageProvider === "tavily" ? "TAVILY_API_KEY" : "SERPER_API_KEY",
-        "TRELLO_API_KEY",
-        "TRELLO_API_TOKEN",
       ]
     : [];
   const missing = requiredKeys.filter((key) => !config?.credentials[key]);
@@ -655,8 +661,9 @@ export default function Workspace({
         response.summary.succeeded === selected.length &&
         response.results.length === selected.length &&
         response.results.every(
-          (item) => item.success && item.published && item.commented,
+          (item) => item.success && item.published,
         );
+      const allCommented = response.results.every((item) => item.commented);
       if (completed) {
         updateSource({
           caption: "",
@@ -676,7 +683,9 @@ export default function Workspace({
           text: preview
             ? `Đã viết thử ${response.summary.succeeded}/${response.summary.total} đội. Chưa publish; mở chi tiết để xem nhân vật và bài viết.`
             : completed
-              ? `Đã publish và thêm caption Trello cho ${response.summary.succeeded} đội. Đã xóa nội dung nhập để chuẩn bị bài mới.`
+              ? allCommented
+                ? `Đã publish và thêm caption Trello cho ${response.summary.succeeded} đội. Đã xóa nội dung nhập để chuẩn bị bài mới.`
+                : `Đã publish ${response.summary.succeeded} bài. Caption có trong kết quả để sao chép.`
               : `Hoàn tất ${response.summary.succeeded}/${response.summary.total} đội. Xem kết quả trước khi chạy lại.`,
         });
     } catch (error) {
@@ -813,15 +822,6 @@ export default function Workspace({
         nextPatch.textProvider = patch.textProvider;
       if (patch.imageProvider !== undefined)
         nextPatch.imageProvider = patch.imageProvider;
-      if (patch.categories && prefs)
-        nextPatch.categories = Object.fromEntries(
-          Object.entries(prefs.categories).map(([key, ids]) => [
-            key,
-            ids.filter((id) =>
-              patch.categories!.some((item) => item.id === id),
-            ),
-          ]),
-        );
       if (Object.keys(nextPatch).length) updatePrefs(nextPatch);
       setToast({ kind: "success", text: "Đã lưu cấu hình lên Firestore." });
     } catch (error) {
@@ -894,12 +894,15 @@ export default function Workspace({
       setTeams(value.teams);
       setTeamRevision(value.revision);
       persist("teams", value);
-      if (prefs)
+      if (prefs) {
+        const key = teamKey(deletingTeam);
+        const categories = { ...prefs.categories };
+        delete categories[key];
         updatePrefs({
-          selected: prefs.selected.filter(
-            (key) => key !== teamKey(deletingTeam),
-          ),
+          selected: prefs.selected.filter((selected) => selected !== key),
+          categories,
         });
+      }
       setDeletingTeam(null);
       setToast({
         kind: "success",
@@ -929,19 +932,26 @@ export default function Workspace({
       setTeams(response.teams);
       setTeamRevision(response.revision);
       persist("teams", response);
-      if (prefs && editor.index >= 0) {
-        const oldKey = teamKey(editor.team),
-          newKey = teamKey(value);
-        if (oldKey !== newKey)
+      if (prefs) {
+        const newKey = teamKey(value);
+        const oldKey = editor.index >= 0 ? teamKey(editor.team) : newKey;
+        const categoriesChanged =
+          editor.team.categories.length !== value.categories.length ||
+          editor.team.categories.some((id, index) => id !== value.categories[index]);
+        if (oldKey !== newKey || categoriesChanged || editor.index < 0) {
+          const categories = { ...prefs.categories };
+          const oldOverride = categories[oldKey];
+          delete categories[oldKey];
+          delete categories[newKey];
+          if (!categoriesChanged && oldKey !== newKey && oldOverride?.lineup)
+            categories[newKey] = oldOverride;
           updatePrefs({
             selected: prefs.selected.map((key) =>
               key === oldKey ? newKey : key,
             ),
-            categories: {
-              ...prefs.categories,
-              [newKey]: prefs.categories[oldKey] ?? value.categories,
-            },
+            categories,
           });
+        }
       }
       setToast({ kind: "success", text: "Đã lưu lineup lên Firestore." });
     } catch (error) {
@@ -1175,7 +1185,7 @@ export default function Workspace({
                             />
                             <button
                               className="small"
-                              disabled={busy || sourceLoading}
+                              disabled={busy || sourceLoading || !hasTrelloCredentials}
                               onClick={() => void getSource()}
                             >
                               <Icon name="trello" size={14} />
@@ -1190,6 +1200,8 @@ export default function Workspace({
                           <p className="field-hint">
                             Nhập nội dung trực tiếp hoặc bấm Lấy từ Trello để
                             dùng nguồn đã cấu hình.
+                            {!hasTrelloCredentials &&
+                              " Lấy bài từ Trello cần API key và token Trello."}
                           </p>
                           <div>
                             <div className="field-heading">
@@ -1301,9 +1313,7 @@ export default function Workspace({
                           {teams.map((team) => {
                             const key = teamKey(team),
                               checked = prefs.selected.includes(key),
-                              cats = (
-                                prefs.categories[key] ?? team.categories
-                              ).filter((id) => options.includes(id));
+                              cats = categoriesFor(team);
                             return (
                               <div
                                 key={key}
@@ -1366,7 +1376,10 @@ export default function Workspace({
                                       updatePrefs({
                                         categories: {
                                           ...prefs.categories,
-                                          [key]: values,
+                                          [key]: {
+                                            lineup: team.categories,
+                                            selected: values,
+                                          },
                                         },
                                       })
                                     }
@@ -1489,7 +1502,7 @@ export default function Workspace({
                           </div>
                           <div className="run-stat">
                             <span>Đích xuất bản</span>
-                            <strong>Tinfos → Trello</strong>
+                            <strong>{hasTrelloCredentials ? "Tinfos → Trello" : "Tinfos"}</strong>
                           </div>
                           {missing.length > 0 && (
                             <p className="field-hint warning-text">
@@ -1535,7 +1548,9 @@ export default function Workspace({
                             <p className="run-note">
                               Bài viết được publish sau khi cập nhật thành công.
                               <br />
-                              Caption sẽ vào đúng thẻ Trello của từng bài.
+                              {hasTrelloCredentials
+                                ? "Caption sẽ vào đúng thẻ Trello của từng bài."
+                                : "Caption có trong kết quả để sao chép. Thêm thông tin Trello để tự động lưu caption vào thẻ."}
                             </p>
                           )}
                           {busy && (

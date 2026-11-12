@@ -35,6 +35,7 @@ export class ContentWorkflowService {
 
   async run(
     body: Omit<CompleteWorkflowBody, 'teams'> & { teams?: ContentTeam[] },
+    { allowManualPublishWithoutTrello = false } = {},
   ) {
     if (!body || !['serper', 'tavily'].includes(body.imageProvider)) {
       throw new BadRequestException('imageProvider must be serper or tavily');
@@ -67,13 +68,22 @@ export class ContentWorkflowService {
     }
     if (!body.login && !this.auth.get())
       throw new UnauthorizedException('missing token');
-    // Fail before creating any drafts when a required credential is missing.
-    for (const key of [
-      'TRELLO_API_KEY',
-      'TRELLO_API_TOKEN',
+    const trelloRequired =
+      body.caption === undefined || !allowManualPublishWithoutTrello;
+    const credentials = this.config.credentialStatus?.() ?? {
+      TRELLO_API_KEY: false,
+      TRELLO_API_TOKEN: false,
+    };
+    const commentOnTrello =
+      trelloRequired ||
+      (credentials.TRELLO_API_KEY && credentials.TRELLO_API_TOKEN);
+    if (trelloRequired) {
+      this.config.key('TRELLO_API_KEY');
+      this.config.key('TRELLO_API_TOKEN');
+    }
+    this.config.key(
       body.imageProvider === 'tavily' ? 'TAVILY_API_KEY' : 'SERPER_API_KEY',
-    ])
-      this.config.key(key);
+    );
     if (this.running)
       throw new ConflictException(
         'A workflow is already running on this instance',
@@ -143,7 +153,7 @@ export class ContentWorkflowService {
           }
           try {
             results[index] = {
-              ...(await this.runTeam(team, written.article!, body)),
+              ...(await this.runTeam(team, written.article!, body, commentOnTrello)),
               sport: team.sport,
               success: true,
               rotation: written.rotation,
@@ -200,6 +210,7 @@ export class ContentWorkflowService {
     team: ContentTeam,
     generated: PreparedContent,
     body: CompleteWorkflowBody,
+    commentOnTrello: boolean,
   ) {
     let stage = 'create';
     let postId: string | undefined;
@@ -227,16 +238,18 @@ export class ContentWorkflowService {
       stage = 'publish';
       const publication = await this.articles.publishPost(postId);
       published = true;
-      stage = 'trello-comment';
       // data4 finds the publish response by slug and reads trello[0].cardId.
       const publishedPost = publication?.slug === slug ? publication : null;
       const cardId = publishedPost?.trello?.[0]?.cardId;
-      if (typeof cardId !== 'string' || !cardId) {
-        throw new UnprocessableEntityException(
-          'Publish response missing matching slug or trello[0].cardId; article may already be published',
-        );
+      if (commentOnTrello) {
+        stage = 'trello-comment';
+        if (typeof cardId !== 'string' || !cardId) {
+          throw new UnprocessableEntityException(
+            'Publish response missing matching slug or trello[0].cardId; article may already be published',
+          );
+        }
+        await this.trello.comment(cardId, prepared.caption);
       }
-      await this.trello.comment(cardId, prepared.caption);
       return {
         team: team.team,
         postId,
@@ -245,7 +258,7 @@ export class ContentWorkflowService {
         title: prepared.title,
         caption: prepared.caption,
         published: true,
-        commented: true,
+        commented: commentOnTrello,
       };
     } catch (error) {
       const details =

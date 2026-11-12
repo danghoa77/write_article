@@ -29,6 +29,10 @@ const team = {
 const config = {
   defaults: () => new ContentConfigService().defaults(),
   key: (name) => 'fake-' + name,
+  credentialStatus: () => ({
+    TRELLO_API_KEY: true,
+    TRELLO_API_TOKEN: true,
+  }),
 };
 const generated = {
   title: 'Sample Title',
@@ -401,6 +405,38 @@ test('missing publish Trello data does not silently write to source card', async
     },
   );
   assert.equal(calls.includes('comment'), false);
+});
+test('workspace direct content publishes without Trello credentials or a Trello comment', async () => {
+  const { service, calls } = runner();
+  service.config = {
+    ...config,
+    credentialStatus: () => ({
+      TRELLO_API_KEY: false,
+      TRELLO_API_TOKEN: false,
+    }),
+    key: (name) => {
+      if (name.startsWith('TRELLO_')) throw Error('Trello must not be required');
+      return 'fake-' + name;
+    },
+  };
+  const result = await service.run(
+    {
+      teams: [team],
+      imageProvider: 'serper',
+      caption: 'Direct caption',
+      content: 'Direct content',
+    },
+    { allowManualPublishWithoutTrello: true },
+  );
+  assert.deepEqual(calls, [
+    'generate',
+    'create',
+    'images-serper',
+    'update',
+    'publish',
+  ]);
+  assert.equal(result.results[0].published, true);
+  assert.equal(result.results[0].commented, false);
 });
 test('missing auth token fails before external effects', async () => {
   const { service, calls, auth } = runner();

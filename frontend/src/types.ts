@@ -113,7 +113,7 @@ export type LibraryItem = {
 export type Library = { items: LibraryItem[]; revision: number };
 export type Preferences = {
   selected: string[];
-  categories: Record<string, number[]>;
+  categories: Record<string, { lineup: number[]; selected: number[] }>;
   textProvider: "gemini" | "gpt";
   imageProvider: "tavily" | "serper";
   slugSuffix: string;

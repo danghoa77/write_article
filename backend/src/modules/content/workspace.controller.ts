@@ -145,14 +145,17 @@ export class WorkspaceController {
           this.sessions.uid(req.browserSession),
         );
         // Browser requests always use the verified session, never stored login credentials.
-        return this.workflow.run({
-          ...body,
-          prompts: await this.resolvePrompts(uid, body),
-          login: undefined,
-          teams,
-          slugSuffix: body.slugSuffix ?? settings.slugSuffix,
-          prompt: body.prompt ?? '',
-        });
+        return this.workflow.run(
+          {
+            ...body,
+            prompts: await this.resolvePrompts(uid, body),
+            login: undefined,
+            teams,
+            slugSuffix: body.slugSuffix ?? settings.slugSuffix,
+            prompt: body.prompt ?? '',
+          },
+          { allowManualPublishWithoutTrello: true },
+        );
       }),
     );
   }
