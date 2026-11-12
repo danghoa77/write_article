@@ -569,6 +569,7 @@ export default function Workspace({
   const hasTrelloCredentials = Boolean(
     config?.credentials.TRELLO_API_KEY && config.credentials.TRELLO_API_TOKEN,
   );
+  const postsCaptionToTrello = Boolean(source.cardId);
   const requiredKeys = prefs
     ? [
         prefs.textProvider === "gemini" ? "GEMINI_API_KEY" : "OPENAI_API_KEY",
@@ -617,6 +618,7 @@ export default function Workspace({
           teams: selected,
           caption: source.caption,
           content: source.content,
+          ...(source.cardId ? { sourceCardId: source.cardId } : {}),
           textProvider: prefs.textProvider,
           imageProvider: prefs.imageProvider,
           prompts,
@@ -1217,7 +1219,10 @@ export default function Workspace({
                               rows={3}
                               value={source.caption}
                               onChange={(event) =>
-                                updateSource({ caption: event.target.value })
+                                updateSource({
+                                  caption: event.target.value,
+                                  cardId: "",
+                                })
                               }
                             />
                           </div>
@@ -1233,7 +1238,10 @@ export default function Workspace({
                               rows={8}
                               value={source.content}
                               onChange={(event) =>
-                                updateSource({ content: event.target.value })
+                                updateSource({
+                                  content: event.target.value,
+                                  cardId: "",
+                                })
                               }
                             />
                           </div>
@@ -1502,7 +1510,7 @@ export default function Workspace({
                           </div>
                           <div className="run-stat">
                             <span>Đích xuất bản</span>
-                            <strong>{hasTrelloCredentials ? "Tinfos → Trello" : "Tinfos"}</strong>
+                            <strong>{postsCaptionToTrello ? "Tinfos → Trello" : "Tinfos"}</strong>
                           </div>
                           {missing.length > 0 && (
                             <p className="field-hint warning-text">
@@ -1548,9 +1556,9 @@ export default function Workspace({
                             <p className="run-note">
                               Bài viết được publish sau khi cập nhật thành công.
                               <br />
-                              {hasTrelloCredentials
+                              {postsCaptionToTrello
                                 ? "Caption sẽ vào đúng thẻ Trello của từng bài."
-                                : "Caption có trong kết quả để sao chép. Thêm thông tin Trello để tự động lưu caption vào thẻ."}
+                                : "Caption có trong kết quả để sao chép. Dùng Lấy từ Trello để tự động lưu caption vào thẻ."}
                             </p>
                           )}
                           {busy && (

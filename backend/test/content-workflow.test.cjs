@@ -406,14 +406,10 @@ test('missing publish Trello data does not silently write to source card', async
   );
   assert.equal(calls.includes('comment'), false);
 });
-test('workspace direct content publishes without Trello credentials or a Trello comment', async () => {
+test('workspace direct content publishes without a Trello comment', async () => {
   const { service, calls } = runner();
   service.config = {
     ...config,
-    credentialStatus: () => ({
-      TRELLO_API_KEY: false,
-      TRELLO_API_TOKEN: false,
-    }),
     key: (name) => {
       if (name.startsWith('TRELLO_')) throw Error('Trello must not be required');
       return 'fake-' + name;

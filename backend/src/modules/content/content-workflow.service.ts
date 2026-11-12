@@ -69,14 +69,10 @@ export class ContentWorkflowService {
     if (!body.login && !this.auth.get())
       throw new UnauthorizedException('missing token');
     const trelloRequired =
-      body.caption === undefined || !allowManualPublishWithoutTrello;
-    const credentials = this.config.credentialStatus?.() ?? {
-      TRELLO_API_KEY: false,
-      TRELLO_API_TOKEN: false,
-    };
-    const commentOnTrello =
-      trelloRequired ||
-      (credentials.TRELLO_API_KEY && credentials.TRELLO_API_TOKEN);
+      body.caption === undefined ||
+      Boolean(body.sourceCardId) ||
+      !allowManualPublishWithoutTrello;
+    const commentOnTrello = trelloRequired;
     if (trelloRequired) {
       this.config.key('TRELLO_API_KEY');
       this.config.key('TRELLO_API_TOKEN');

@@ -133,5 +133,6 @@ export interface CompleteWorkflowBody extends CharacterOptions {
   textProvider?: TextProvider;
   caption?: string;
   content?: string;
+  sourceCardId?: string;
   concurrency?: number;
 }
