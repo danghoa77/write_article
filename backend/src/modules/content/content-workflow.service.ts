@@ -72,7 +72,9 @@ export class ContentWorkflowService {
       body.caption === undefined ||
       Boolean(body.sourceCardId) ||
       !allowManualPublishWithoutTrello;
-    const commentOnTrello = trelloRequired;
+    const credentials = trelloRequired ? undefined : this.config.credentialStatus();
+    const commentOnTrello = trelloRequired ||
+      Boolean(credentials?.TRELLO_API_KEY && credentials.TRELLO_API_TOKEN);
     if (trelloRequired) {
       this.config.key('TRELLO_API_KEY');
       this.config.key('TRELLO_API_TOKEN');

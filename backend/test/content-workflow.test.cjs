@@ -406,10 +406,21 @@ test('missing publish Trello data does not silently write to source card', async
   );
   assert.equal(calls.includes('comment'), false);
 });
-test('workspace direct content publishes without a Trello comment', async () => {
+test('workspace direct content sends its caption to the published card when Trello is configured', async () => {
+  const { service, calls } = runner();
+  service.trello.source = async () => assert.fail('manual input must not fetch a source card');
+  const result = await service.run(
+    { teams: [team], imageProvider: 'serper', caption: 'Direct caption', content: 'Direct content' },
+    { allowManualPublishWithoutTrello: true },
+  );
+  assert.deepEqual(calls.slice(-2), ['publish', 'comment']);
+  assert.equal(result.results[0].commented, true);
+});
+test('workspace direct content publishes without a Trello comment when credentials are missing', async () => {
   const { service, calls } = runner();
   service.config = {
     ...config,
+    credentialStatus: () => ({ TRELLO_API_KEY: true, TRELLO_API_TOKEN: false }),
     key: (name) => {
       if (name.startsWith('TRELLO_')) throw Error('Trello must not be required');
       return 'fake-' + name;
