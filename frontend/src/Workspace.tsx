@@ -308,13 +308,13 @@ function ResultDetail({
               Mở Trello <Icon name="external" size={13} />
             </a>
           )}
-          {result.published && result.slug && (
+          {result.published && result.articleUrl && (
             <a
-              href={`https://tfs.jervisfamily.com/posts/${encodeURIComponent(result.slug)}`}
+              href={result.articleUrl}
               target="_blank"
               rel="noreferrer"
             >
-              Xem bài viết <Icon name="external" size={13} />
+              Link gốc <Icon name="external" size={13} />
             </a>
           )}
         </div>

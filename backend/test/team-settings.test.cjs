@@ -210,6 +210,7 @@ function workflow(options = {}) {
           content: 'Shared content',
         };
       },
+      articleUrl: async () => undefined,
       comment: async (id, caption) => {
         comments.push({ id, caption });
         events.push('comment:' + id);

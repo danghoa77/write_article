@@ -154,6 +154,7 @@ export type Result = {
   postId?: string;
   cardId?: string;
   slug?: string;
+  articleUrl?: string;
   title?: string;
   caption?: string;
   published?: boolean;

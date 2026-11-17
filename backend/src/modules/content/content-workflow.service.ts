@@ -248,10 +248,15 @@ export class ContentWorkflowService {
         }
         await this.trello.comment(cardId, prepared.caption);
       }
+      // The company supplies the raw URL on the card. Its absence does not undo a publication.
+      const articleUrl = typeof cardId === 'string' && cardId
+        ? await this.trello.articleUrl(cardId, slug).catch(() => undefined)
+        : undefined;
       return {
         team: team.team,
         postId,
         slug,
+        articleUrl,
         cardId,
         title: prepared.title,
         caption: prepared.caption,

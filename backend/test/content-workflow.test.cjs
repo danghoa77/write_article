@@ -312,6 +312,7 @@ function runner(options = {}) {
     },
   };
   const trello = {
+    articleUrl: async () => undefined,
     source: async () => ({
       cardId: 'source123',
       caption: 'Caption',
@@ -591,6 +592,9 @@ test('Nest route executes inline login -> source -> create -> Gemini -> images -
       assert.equal(url.searchParams.get('text'), generated.caption);
       return json({ id: 'comment123' });
     }
+    if (url.hostname === 'api.trello.com' && url.pathname === '/1/cards/published123') {
+      return json({ desc: 'https://spark.cafe/posts/' + updated.slug });
+    }
     throw Error('Unexpected fake URL ' + url.hostname + url.pathname);
   };
   const {Test}=require('@nestjs/testing');
@@ -620,6 +624,7 @@ test('Nest route executes inline login -> source -> create -> Gemini -> images -
     assert.equal(result.body.success, true);
     assert.equal(result.body.results[0].cardId, 'published123');
     assert.equal(updated.slug, 'sample-title-ngocthao123-team-spark-abcdef');
+    assert.equal(result.body.results[0].articleUrl, 'https://spark.cafe/posts/' + updated.slug);
     assert.deepEqual(calls, [
       'login',
       'source-card',

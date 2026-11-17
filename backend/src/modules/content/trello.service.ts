@@ -59,6 +59,17 @@ export class TrelloService {
     };
   }
 
+  async articleUrl(cardId: string, slug: string): Promise<string | undefined> {
+    const card = await this.http.json(
+      this.url(`cards/${this.id(cardId)}`, { fields: 'desc' }),
+    );
+    if (typeof card?.desc !== 'string') return;
+    const links = card.desc.match(/https?:\/\/[^\s<>"')\]]+/gi) ?? [];
+    return links.find((link: string) =>
+      URL.canParse(link) && new URL(link).pathname === `/posts/${slug}`,
+    );
+  }
+
   async comment(cardId: string, text: string) {
     // Trello node cardComment defaults to adding a comment using text query param.
     return this.http.json(
